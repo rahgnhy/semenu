@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http: https:; media-src 'self' blob:; worker-src 'self' blob:;">
+  <title>SE-MENU</title>
+  <link rel="stylesheet" href="styles/styles.css">
+  <link rel="icon" href="../../assets/icon-32.png">
+</head>
+<body>
+
+  <!-- ====================================================== splash -->
+  <div id="splash">
+    <div class="sp-card">
+      <div class="sp-brand">
+        <div class="sp-halo"></div>
+        <div class="sp-ring"></div>
+        <div class="sp-ring2"></div>
+        <div class="sp-mark" id="splash-mark"><span data-icon="se"></span></div>
+      </div>
+
+      <div class="sp-title">SE-MENU</div>
+      <div class="sp-tagline">Liquid-glass utility console</div>
+
+      <div class="sp-progress">
+        <div class="sp-track"><div class="sp-bar" id="sp-bar"></div></div>
+        <span class="sp-pct" id="sp-pct">0%</span>
+      </div>
+
+      <ul class="sp-steps" id="sp-steps"></ul>
+
+      <div class="sp-update hidden" id="sp-update">
+        <div class="spu-icon" data-icon="download-cloud"></div>
+        <div class="spu-text">
+          <div class="spu-title">An update is available — please press update</div>
+          <div class="spu-sub" id="spu-sub"></div>
+        </div>
+        <button class="btn btn-primary btn-sm spu-btn" id="spu-btn">Update now</button>
+        <button class="btn btn-ghost btn-sm spu-later" id="spu-later">Later</button>
+      </div>
+
+      <div class="sp-note hidden" id="sp-note"></div>
+
+      <div class="sp-launch hidden" id="sp-launch">
+        <button class="btn btn-primary sp-launch-btn" id="sp-launch-btn"><span data-icon="play"></span>Launch SE-MENU</button>
+        <span class="sp-launch-hint">The console waits here — nothing opens until you press launch.</span>
+      </div>
+
+      <div class="sp-foot"><span data-icon="crown"></span>Made by sside · v1.0</div>
+    </div>
+  </div>
+
+  <!-- ====================================================== app -->
+  <div id="app">
+    <canvas id="bg-canvas"></canvas>
+    <div class="bg-fallback" id="bg-fallback"></div>
+
+    <div class="app-body">
+      <!-- sidebar -->
+      <aside class="sidebar">
+        <div class="side-brand">
+          <div class="brand-mark" data-icon="se"></div>
+          <div class="brand-name">SE-MENU</div>
+        </div>
+        <div class="side-label">Workspace</div>
+        <nav class="side-nav" id="side-nav"></nav>
+        <div class="side-foot">
+          <span class="version-chip">v1.0</span>
+        </div>
+      </aside>
+
+      <!-- main -->
+      <main class="content">
+        <header class="titlebar">
+          <div class="titlebar-drag">
+            <span class="tb-tab-icon" id="tb-tab-icon"></span>
+            <span class="tb-tab-title" id="tb-tab-title">OpenCode Reset Tokens</span>
+          </div>
+          <div class="tb-actions">
+            <button class="tb-btn" id="btn-update" data-tip="Updates — check for new versions" data-tip-pos="bottom">
+              <span data-icon="download-cloud"></span>
+            </button>
+            <button class="tb-btn" id="btn-settings" data-tip="Settings" data-tip-pos="bottom">
+              <span data-icon="settings"></span>
+            </button>
+            <div class="tb-sep"></div>
+            <button class="tb-btn" id="btn-min" data-tip="Minimize" data-tip-pos="bottom"><span data-icon="minus"></span></button>
+            <button class="tb-btn" id="btn-max" data-tip="Maximize" data-tip-pos="bottom"><span data-icon="maximize"></span></button>
+            <button class="tb-btn tb-close" id="btn-close" data-tip="Close" data-tip-pos="bottom"><span data-icon="x"></span></button>
+          </div>
+        </header>
+        <div class="content-scroll" id="content-scroll">
+          <div class="content-inner" id="content-inner"></div>
+        </div>
+        <div class="watermark"><span data-icon="crown"></span>Made by sside</div>
+      </main>
+    </div>
+  </div>
+
+  <div id="tooltip"></div>
+  <div id="toasts"></div>
+
+  <!-- ====================================================== OPENCODE RESET tab -->
+  <template id="tpl-tab-opencode-reset">
+    <div class="tab-page" id="tab-opencode-reset"></div>
+  </template>
+
+  <!-- ====================================================== IL2CPP DUMPER tab -->
+  <template id="tpl-tab-il2cpp-dumper">
+    <div class="tab-page" id="tab-il2cpp-dumper"></div>
+  </template>
+
+  <!-- ====================================================== SETTINGS tab -->
+  <template id="tpl-tab-settings">
+    <div class="tab-page" id="tab-settings">
+      <div class="page-head">
+        <div>
+          <div class="page-title">Settings</div>
+          <div class="page-sub">Background animation, glass appearance and application preferences.</div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-ghost" id="btn-reset-appearance"><span data-icon="reset"></span>Reset appearance</button>
+        </div>
+      </div>
+      <div id="settings-body"></div>
+    </div>
+  </template>
+
+  <script src="js/dom.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/background.js"></script>
+  <script src="js/netlab.js"></script>
+  <script src="js/sysmon.js"></script>
+  <script src="js/timelab.js"></script>
+  <script src="js/animlab.js"></script>
+  <script src="js/perf.js"></script>
+  <script src="js/devtools.js"></script>
+  <script src="js/playground.js"></script>
+  <script src="js/utilities.js"></script>
+  <script src="js/updater-ui.js"></script>
+  <script src="js/settings.js"></script>
+  <script src="js/opencode-reset.js"></script>
+  <script src="js/il2cpp-dumper.js"></script>
+  <script src="js/selftest.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

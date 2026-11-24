@@ -1,0 +1,9 @@
+{
+  "version": "1.2.0",
+  "downloadUrl": "https://example.com/se-menu/semenu-v1.2.0-Setup.exe",
+  "fileName": "semenu-v1.2.0-Setup.exe",
+  "sha256": "replace-with-the-sha256-of-the-installer",
+  "size": 83210000,
+  "notes": "Release notes for 1.2.0.\n\n- Bullet one\n- Bullet two",
+  "publishedAt": "2026-11-12T09:00:00Z"
+}

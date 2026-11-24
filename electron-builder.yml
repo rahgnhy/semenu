@@ -1,0 +1,42 @@
+appId: com.sside.semenu
+productName: SE-MENU
+copyright: Copyright © 2026 sside
+
+directories:
+  output: dist
+  buildResources: assets
+
+files:
+  - src/**
+  - assets/**
+  - package.json
+  - "!**/*.map"
+
+extraResources:
+  - from: assets/OpenCode-Infinite.bat
+    to: assets/OpenCode-Infinite.bat
+  - from: assets/tools/il2cppdumper
+    to: assets/tools/il2cppdumper
+
+win:
+  target:
+    - nsis
+    - portable
+  icon: assets/icon.ico
+  executableName: semenu
+
+# Artifact names are spelled out so the shipped files read exactly
+# semenu-v1.0.exe / semenu-v1.0-Setup.exe. Bump both strings and the
+# package.json version together for the next release.
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  shortcutName: SE-MENU
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  artifactName: semenu-v1.0-Setup.${ext}
+
+portable:
+  artifactName: semenu-v1.0.${ext}

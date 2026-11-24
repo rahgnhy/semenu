@@ -1,0 +1,208 @@
+{
+  "ts": "2026-11-24T13:37:03.833Z",
+  "app": {
+    "name": "SE-MENU",
+    "version": "1.0.0",
+    "electron": "33.4.11",
+    "chrome": "130.0.6723.191",
+    "node": "20.18.3",
+    "v8": "13.0.245.25-electron.0",
+    "platform": "win32",
+    "arch": "x64",
+    "release": "10.0.26200",
+    "hostname": "Rayan",
+    "userData": "C:\\Users\\rayan\\AppData\\Roaming\\SE-MENU",
+    "execPath": "C:\\Users\\rayan\\Downloads\\New folder\\node_modules\\electron\\dist\\electron.exe",
+    "isPackaged": false,
+    "cwd": "C:\\Users\\rayan\\Downloads\\New folder"
+  },
+  "checks": [
+    {
+      "name": "ping.parse",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "ms": 5,
+        "host": "1.1.1.1",
+        "raw": "Pinging 1.1.1.1 with 32 bytes of data:\r\nReply from 1.1.1.1: bytes=32 time=5ms TTL=57\r\n\r\nPing statistics for 1.1.1.1:\r\n    Packets: Sent = 1, Received = 1, Lost = 0 (0% loss),\r\nApproximate round trip times in milli-seconds:\r\n    Minimum = 5ms, Maximum = 5ms, Average = 5ms"
+      }
+    },
+    {
+      "name": "dns.resolve",
+      "ok": true,
+      "detail": {
+        "ok": true,
+        "type": "A",
+        "host": "example.com",
+        "answers": [
+          "172.66.147.243",
+          "104.20.23.154"
+        ],
+        "timeMs": 13
+      }
+    },
+    {
+      "name": "sys.snapshot",
+      "ok": true,
+      "detail": {
+        "cpu": 29.360884190293124,
+        "memPercent": 66.64300818231455,
+        "disks": 1
+      }
+    },
+    {
+      "name": "updater.config",
+      "ok": true,
+      "detail": {
+        "mode": "custom",
+        "githubRepo": "",
+        "channel": "stable",
+        "customManifestUrl": "C:\\Users\\rayan\\se-menu-updates\\manifest.json",
+        "autoCheck": true,
+        "autoDownload": true,
+        "checkIntervalHours": 1,
+        "skippedVersion": null,
+        "lastCheck": 1795527419308
+      }
+    },
+    {
+      "name": "http.request",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "ms": 86
+      }
+    },
+    {
+      "name": "screenshot",
+      "ok": true,
+      "detail": {
+        "path": "C:\\Users\\rayan\\Downloads\\New folder\\selftest.png"
+      }
+    }
+  ],
+  "renderer": {
+    "total": 23,
+    "passed": 23,
+    "failed": 0,
+    "durationMs": 3038.600000000093,
+    "ts": "2026-11-24T13:37:03.714Z",
+    "results": [
+      {
+        "name": "document is visible",
+        "ok": true,
+        "detail": "visible"
+      },
+      {
+        "name": "requestAnimationFrame runs",
+        "ok": true,
+        "detail": "146 frames in 1000 ms"
+      },
+      {
+        "name": "tab registry holds exactly three tabs",
+        "ok": true,
+        "detail": "opencode-reset,il2cpp-dumper,settings"
+      },
+      {
+        "name": "tabs include OpenCode Reset Tokens, Il2CppDumper and Settings",
+        "ok": true,
+        "detail": "OpenCode Reset Tokens,Il2CppDumper,Settings"
+      },
+      {
+        "name": "OpenCode Reset Tokens tab mounts",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "OpenCode menu present",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "session log present",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "Il2CppDumper tab mounts",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "APK drop zone present",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "Il2CppDumper run button present",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "Settings tab mounts",
+        "ok": true,
+        "detail": "6 background previews"
+      },
+      {
+        "name": "background previews render",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "background engine running",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "theme tokens applied",
+        "ok": true,
+        "detail": "#8b7cf6"
+      },
+      {
+        "name": "tooltip appears on hover",
+        "ok": true,
+        "detail": "Run the OpenCode Infinite launcher to re"
+      },
+      {
+        "name": "toast notification renders",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "modal opens",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "modal closes",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "devtools logging available",
+        "ok": true,
+        "detail": ""
+      },
+      {
+        "name": "ping returns a real measurement",
+        "ok": true,
+        "detail": "ok=true ms=5"
+      },
+      {
+        "name": "system telemetry stream",
+        "ok": true,
+        "detail": "mem=16984080384"
+      },
+      {
+        "name": "update configuration loads",
+        "ok": true,
+        "detail": "custom"
+      },
+      {
+        "name": "update state stream emits",
+        "ok": true,
+        "detail": "upToDate"
+      }
+    ]
+  }
+}
