@@ -25,7 +25,15 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run dist
+        run: npm run dist 2>&1 | Tee-Object -FilePath build.log
+        shell: pwsh
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
 
       - name: Create release
         uses: softprops/action-gh-release@v2
