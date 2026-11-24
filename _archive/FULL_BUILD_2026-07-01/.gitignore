@@ -1,6 +1,0 @@
-node_modules/
-dist/
-selftest-report.json
-selftest.png
-shot-*.png
-config/*.local.json

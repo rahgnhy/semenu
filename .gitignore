@@ -22,4 +22,8 @@ Thumbs.db
 *.key
 
 # SE-MENU local
-selftest-report.json_archive/
+selftest-report.json
+_archive/
+*.png
+*.jpg
+*.jpeg
