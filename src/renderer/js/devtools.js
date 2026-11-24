@@ -166,14 +166,12 @@
     if (!refs) return;
     let cfg = {};
     try { cfg = await window.seMenu.updater.getConfig(); } catch (e) { cfg = {}; }
-    let updateUrl = 'not configured';
-    if (cfg.mode === 'custom' && cfg.customManifestUrl) updateUrl = cfg.customManifestUrl;
-    else if (cfg.mode === 'github' && cfg.githubRepo) updateUrl = `https://api.github.com/repos/${cfg.githubRepo}/releases/${cfg.channel === 'beta' ? '?per_page=10' : 'latest'}`;
+    let updateUrl = 'automatic';
+    if (cfg && cfg.updateEndpoint) updateUrl = cfg.updateEndpoint;
     const list = [
       { id: 'update', name: 'Update server', url: updateUrl, method: 'GET' },
       { id: 'ipify', name: 'Public IP service', url: 'https://api.ipify.org?format=json', method: 'GET' },
       { id: 'cloudflare', name: 'Speed test endpoint', url: 'https://speed.cloudflare.com/__down?bytes=1000', method: 'GET' },
-      { id: 'github', name: 'GitHub API', url: 'https://api.github.com', method: 'GET' },
     ];
     clear(refs.api);
     for (const ep of list) {
@@ -250,7 +248,7 @@
     tasks.push({ name: 'Frame rate sampler', detail: 'requestAnimationFrame delta monitor', interval: 'per frame', status: perfState.fps ? 'active' : 'paused' });
     tasks.push({ name: 'Heap sampler', detail: 'JavaScript heap usage', interval: '1 s', status: perfState.fps ? 'active' : 'paused' });
     tasks.push({ name: 'Animation chart', detail: 'Synthetic preview data feed', interval: '420 ms', status: anim.playing ? 'active' : 'idle' });
-    tasks.push({ name: 'Update checker', detail: 'Release manifest poll', interval: '6 h', status: updaterState.phase });
+    tasks.push({ name: 'Update checker', detail: 'Version check', interval: '6 h', status: updaterState.phase });
     tasks.push({ name: 'Power monitor', detail: 'AC / battery / suspend events', interval: 'event', status: 'active' });
 
     clear(refs.tasks);

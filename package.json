@@ -1,7 +1,7 @@
 {
   "name": "se-menu",
   "productName": "SE-MENU",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "SE-MENU — a compact liquid-glass utility console for Windows.",
   "main": "src/main/main.js",
   "author": "sside",
@@ -17,7 +17,7 @@
     "postinstall": "node scripts/install-fonts.js"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {

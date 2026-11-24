@@ -436,16 +436,15 @@
 
       await spRun('Checking for updates', async () => {
         const cfg = await window.seMenu.updater.getConfig();
-        const configured = cfg.mode === 'custom' ? !!cfg.customManifestUrl : !!cfg.githubRepo;
-        if (cfg.autoCheck === false || !configured) {
-          note('Updates paused — set a release endpoint in Settings → Updates.');
+        if (cfg.autoCheck === false) {
+          note('Updates are paused. Turn automatic checks back on in Settings.');
           return;
         }
         const res = await window.seMenu.updater.check();
         if (res && res.phase === 'available') {
           showSplashUpdate(res);
         } else if (res && res.phase === 'upToDate') {
-          note(`You are up to date — v${state.appInfo.version} is the latest release.`);
+          note(`You are up to date - v${state.appInfo.version} is the latest version.`);
         } else if (res && res.phase === 'error') {
           note(`Update check failed: ${res.error}`);
         }

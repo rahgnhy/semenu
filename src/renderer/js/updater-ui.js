@@ -26,7 +26,7 @@
     installing: 'Installing…',
     upToDate: 'You are up to date',
     error: 'Update error',
-    notConfigured: 'No update server configured',
+    notConfigured: 'Update check unavailable',
   };
 
   function phaseText() {
@@ -98,7 +98,7 @@
     }
     if (state.phase === 'downloaded') return state.verified ? 'Integrity verified (SHA-256)' : 'Downloaded — no checksum published';
     if (state.phase === 'error') return state.error || 'Something went wrong';
-    return `You are on v${appInfo ? appInfo.version : '?'} · ${state.source || (config ? config.mode : '')} channel`;
+    return `You are on v${appInfo ? appInfo.version : '?'} - the latest version available`;
   }
 
   /* -------------------------------------------------------- status blocks */
@@ -110,7 +110,7 @@
     box.innerHTML = '';
     box.appendChild(h('div', { class: 'row between center', style: 'gap:8px;margin-bottom:9px' },
       h('span', { class: 'mono muted', style: 'font-size:.66rem' },
-        `source: ${config && config.mode === 'custom' ? `custom · ${config.customManifestUrl || 'not set'}` : `github · ${config && config.githubRepo ? config.githubRepo : 'not set'} · ${config ? config.channel : 'stable'}`}`),
+        'Automatic updates'),
       h('span', { class: 'badge ' + badgeClass, text: phaseText() }),
     ));
     if (s && s.error) {
@@ -152,7 +152,7 @@
     );
     modal = P.dom.openModal({
       title: 'Updates',
-      sub: 'Version management, release channel and download settings',
+      sub: 'Version management and download settings',
       icon: 'download-cloud',
       body: modalBody,
       footer,
@@ -175,12 +175,12 @@
         versionCell('State', phaseText()),
       ),
       h('div', { class: 'mono', style: 'font-size:.62rem;color:var(--text-3);margin-top:8px' },
-        `source: ${config && config.mode === 'custom' ? `custom manifest · ${config.customManifestUrl || 'not set'}` : `github · ${config && config.githubRepo ? config.githubRepo : 'not set'} · ${config ? config.channel : 'stable'}`}`),
+        'Automatic updates are enabled'),
     ));
 
     if (state && state.notes && (phase === 'available' || phase === 'downloaded')) {
       modalBody.appendChild(h('div', { class: 'subpanel', style: 'margin-top:10px' },
-        h('div', { class: 'subpanel-title', html: `${icon('file-text', 12)} Release notes${state.latest ? ` — v${state.latest}` : ''}` }),
+        h('div', { class: 'subpanel-title', html: `${icon('file-text', 12)} What's new${state.latest ? ` - v${state.latest}` : ''}` }),
         h('div', { style: 'max-height:130px;overflow-y:auto;font-size:.72rem;color:var(--text-2);line-height:1.55;white-space:pre-wrap' }, state.notes),
       ));
     }
@@ -197,32 +197,13 @@
       actions.appendChild(h('span', { class: 'badge acc', text: phase === 'installing' ? 'installing — SE-MENU will restart' : 'download in progress…' }));
     }
     if (phase === 'notConfigured') {
-      actions.appendChild(h('span', { class: 'badge warn', text: 'configure a release endpoint below or in Settings' }));
+      actions.appendChild(h('span', { class: 'badge warn', text: 'try checking again in a moment' }));
     }
     modalBody.appendChild(actions);
 
-    // release source configuration
+    // automatic update settings
     const cfg = h('div', { class: 'subpanel' },
-      h('div', { class: 'subpanel-title', html: `${icon('settings', 12)} Release source` }));
-
-    const modeSeg = h('div', { class: 'segmented', id: 'up-mode' },
-      h('button', { class: config && config.mode === 'github' ? 'active' : '', 'data-mode': 'github', text: 'GitHub Releases' }),
-      h('button', { class: config && config.mode === 'custom' ? 'active' : '', 'data-mode': 'custom', text: 'Custom manifest' }),
-    );
-    cfg.appendChild(h('div', { style: 'margin-bottom:9px' }, modeSeg));
-
-    const repoInput = h('input', { class: 'input mono', value: (config && config.githubRepo) || '', placeholder: 'owner/repository', style: 'font-size:.76rem' });
-    const channelSel = h('select', { class: 'select', style: 'font-size:.76rem' },
-      h('option', { value: 'stable', ...(config && config.channel === 'stable' ? { selected: 'true' } : {}) }, 'Stable'),
-      h('option', { value: 'beta', ...(config && config.channel === 'beta' ? { selected: 'true' } : {}) }, 'Beta'));
-    const customInput = h('input', { class: 'input mono', value: (config && config.customManifestUrl) || '', placeholder: 'https://example.com/se-menu-update.json', style: 'font-size:.76rem' });
-
-    const repoRow = fieldRow('GitHub repository', repoInput, 'Used when the source is GitHub Releases.');
-    const channelRow = fieldRow('Channel', channelSel, 'Stable tracks /releases/latest; beta picks the highest semver across recent releases.');
-    const customRow = fieldRow('Custom manifest URL', customInput, 'JSON: { "version": "1.2.0", "downloadUrl": "…", "sha256": "…", "notes": "…" }');
-    cfg.appendChild(repoRow);
-    cfg.appendChild(channelRow);
-    cfg.appendChild(customRow);
+      h('div', { class: 'subpanel-title', html: `${icon('settings', 12)} Automatic updates` }));
 
     const autoCheck = toggle('Check automatically on startup and on an interval', config && config.autoCheck !== false);
     const autoDownload = toggle('Download updates automatically when found', !!(config && config.autoDownload));
@@ -232,45 +213,20 @@
     cfg.appendChild(fieldRow('Automatic downloads', autoDownload, ''));
     cfg.appendChild(fieldRow('Check interval', intervalSel, ''));
 
-    const saveBtn = h('button', { class: 'btn btn-primary btn-sm', html: `${icon('save', 13)} Save update settings` });
+    const saveBtn = h('button', { class: 'btn btn-primary btn-sm', html: `${icon('save', 13)} Save` });
     saveBtn.addEventListener('click', async () => {
-      const mode = modeSeg.querySelector('button.active').dataset.mode;
       await window.seMenu.updater.setConfig({
-        mode,
-        githubRepo: repoInput.value.trim(),
-        channel: channelSel.value,
-        customManifestUrl: customInput.value.trim(),
         autoCheck: autoCheck.classList.contains('on'),
         autoDownload: autoDownload.classList.contains('on'),
         checkIntervalHours: parseInt(intervalSel.value, 10),
       });
       config = await window.seMenu.updater.getConfig();
-      toast({ type: 'success', title: 'Update settings saved', message: mode === 'github' ? `GitHub · ${repoInput.value.trim() || 'not set'}` : 'Custom manifest' });
-      bus.emit('log', { level: 'info', message: 'update settings saved' });
+      toast({ type: 'success', title: 'Settings saved', message: 'Update preferences updated.' });
       renderModalBody();
     });
     cfg.appendChild(h('div', { style: 'margin-top:10px' }, saveBtn));
     modalBody.appendChild(cfg);
 
-    $$('#up-mode button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        $$('#up-mode button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const mode = btn.dataset.mode;
-        repoRow.style.display = mode === 'github' ? '' : 'none';
-        channelRow.style.display = mode === 'github' ? '' : 'none';
-        customRow.style.display = mode === 'custom' ? '' : 'none';
-      });
-    });
-    repoRow.style.display = config && config.mode === 'github' ? '' : 'none';
-    channelRow.style.display = config && config.mode === 'github' ? '' : 'none';
-    customRow.style.display = config && config.mode === 'custom' ? '' : 'none';
-
-    modalBody.appendChild(h('div', { class: 'subpanel', style: 'margin-top:10px' },
-      h('div', { class: 'subpanel-title', html: `${icon('shield', 12)} Distributing SE-MENU` }),
-      h('div', { style: 'font-size:.7rem;color:var(--text-2);line-height:1.55' },
-        'Publish the semenu-v<version>-Setup.exe installer plus release notes to a GitHub release, or serve a manifest JSON next to the installer. The app checks the endpoint, downloads with resume support, verifies the SHA-256 digest, then installs and restarts. Settings live in the user data folder and survive updates.'),
-    ));
 
     function fieldRow(label, control, hint) {
       return h('div', { style: 'margin-bottom:9px' },
@@ -292,7 +248,7 @@
   /* ----------------------------------------------------------- actions */
 
   async function runCheck() {
-    toast({ type: 'info', title: 'Checking for updates…', message: 'Contacting the release endpoint.', timeout: 2500 });
+    toast({ type: 'info', title: 'Checking for updates…', message: 'Contacting the update service.', timeout: 2500 });
     try {
       const res = await window.seMenu.updater.check();
       if (res && res.phase === 'available') {
@@ -300,7 +256,7 @@
       } else if (res && res.phase === 'upToDate') {
         toast({ type: 'info', title: 'Up to date', message: `SE-MENU v${appInfo ? appInfo.version : ''} is the latest version.` });
       } else if (res && res.phase === 'notConfigured') {
-        toast({ type: 'warn', title: 'No update server configured', message: 'Add your GitHub repository or a manifest URL in Settings → Updates.', timeout: 7000 });
+        toast({ type: 'warn', title: 'Update check unavailable', message: 'Try again in a moment.', timeout: 7000 });
       } else if (res && res.phase === 'error') {
         toast({ type: 'error', title: 'Update check failed', message: res.error || 'Unknown error', timeout: 7000 });
       }
@@ -351,7 +307,7 @@
   async function skip() {
     if (!state || !state.latest) return;
     await window.seMenu.updater.skip(state.latest);
-    toast({ type: 'info', title: 'Version skipped', message: `SE-MENU ${state.latest} will be ignored until the next release.` });
+    toast({ type: 'info', title: 'Version skipped', message: `SE-MENU ${state.latest} will be ignored until the next version.` });
     ensureBanner();
   }
 
@@ -363,7 +319,7 @@
       try {
         config = await window.seMenu.updater.getConfig();
       } catch (e) {
-        config = { mode: 'github', channel: 'stable' };
+        config = { autoCheck: true, autoDownload: true, checkIntervalHours: 6 };
       }
       window.seMenu.updater.onState(s => {
         const prev = state;
@@ -373,7 +329,7 @@
             toast({
               type: 'success',
               title: `SE-MENU ${s.latest} is available`,
-              message: 'A new version was found — open Updates to read the release notes.',
+              message: 'A new version was found - open Updates to see what changed.',
               timeout: 8000,
             });
           }
@@ -393,7 +349,7 @@
       window.seMenu.updater.onCheckNow(() => runCheck());
       bus.on('tab:activated', ensureBanner);
       ensureBanner();
-      bus.emit('log', { level: 'info', message: `updater ready — mode ${config.mode}${config.githubRepo ? ` · ${config.githubRepo}` : ''} · channel ${config.channel}` });
+      bus.emit('log', { level: 'info', message: `updater ready - automatic updates ${config.autoCheck !== false ? 'on' : 'off'}` });
     },
 
     openModal,

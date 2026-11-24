@@ -209,7 +209,7 @@
   /* -------------------------------------------------------------- updates */
 
   async function buildUpdatesCard() {
-    const el = card('download-cloud', 'Updates', 'Release source, version comparison and installation');
+    const el = card('download-cloud', 'Updates', 'Version comparison, downloads and installation');
     const body = el.querySelector('.card-body');
     body.appendChild(h('div', { class: 'version-grid' },
       versionCell('Current', '—'),
@@ -228,26 +228,6 @@
     const cfg = await window.seMenu.updater.getConfig();
     const grid = h('div', { class: 'setting-grid' });
 
-    const modeSeg = h('div', { class: 'segmented', id: 'up-mode' },
-      h('button', { class: cfg.mode === 'github' ? 'active' : '', 'data-mode': 'github', text: 'GitHub' }),
-      h('button', { class: cfg.mode === 'custom' ? 'active' : '', 'data-mode': 'custom', text: 'Custom' }),
-    );
-    const modeRow = row('Release source', 'Where new versions are published.', modeSeg);
-    grid.appendChild(modeRow);
-
-    const repoInput = h('input', { class: 'input mono', value: cfg.githubRepo || '', placeholder: 'owner/repository', style: 'font-size:.74rem' });
-    const channelSel = h('select', { class: 'select', style: 'font-size:.74rem' },
-      h('option', { value: 'stable', ...(cfg.channel === 'stable' ? { selected: 'true' } : {}) }, 'Stable'),
-      h('option', { value: 'beta', ...(cfg.channel === 'beta' ? { selected: 'true' } : {}) }, 'Beta'));
-    const customInput = h('input', { class: 'input mono', value: cfg.customManifestUrl || '', placeholder: 'https://example.com/manifest.json', style: 'font-size:.74rem' });
-
-    const repoRow = row('Repository', 'owner/repository on GitHub.', repoInput);
-    const channelRow = row('Channel', 'Stable or beta releases.', channelSel);
-    const customRow = row('Manifest URL', 'Custom JSON manifest endpoint.', customInput);
-    grid.appendChild(repoRow);
-    grid.appendChild(channelRow);
-    grid.appendChild(customRow);
-
     const autoCheck = toggle(cfg.autoCheck !== false, () => {});
     const autoDownload = toggle(!!cfg.autoDownload, () => {});
     grid.appendChild(row('Automatic checks', 'Check on startup and on an interval.', autoCheck));
@@ -259,35 +239,16 @@
 
     const saveBtn = h('button', { class: 'btn btn-primary btn-sm', style: 'margin-top:10px' }, 'Save update settings');
     saveBtn.addEventListener('click', async () => {
-      const mode = modeSeg.querySelector('button.active').dataset.mode;
       await window.seMenu.updater.setConfig({
-        mode,
-        githubRepo: repoInput.value.trim(),
-        channel: channelSel.value,
-        customManifestUrl: customInput.value.trim(),
         autoCheck: autoCheck.classList.contains('on'),
         autoDownload: autoDownload.classList.contains('on'),
         checkIntervalHours: parseInt(intervalSel.value, 10),
       });
-      toast({ type: 'success', title: 'Update settings saved', message: mode === 'github' ? `GitHub · ${repoInput.value.trim() || 'not set'}` : 'Custom manifest' });
+      toast({ type: 'success', title: 'Update settings saved', message: 'Your preferences were applied.' });
       P.bus.emit('log', { level: 'info', message: 'update settings saved' });
     });
     grid.appendChild(saveBtn);
     body.appendChild(grid);
-
-    $$('#up-mode button').forEach(btn => {
-      btn.addEventListener('click', () => {
-        $$('#up-mode button').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        const mode = btn.dataset.mode;
-        repoRow.style.display = mode === 'github' ? '' : 'none';
-        channelRow.style.display = mode === 'github' ? '' : 'none';
-        customRow.style.display = mode === 'custom' ? '' : 'none';
-      });
-    });
-    repoRow.style.display = cfg.mode === 'github' ? '' : 'none';
-    channelRow.style.display = cfg.mode === 'github' ? '' : 'none';
-    customRow.style.display = cfg.mode === 'custom' ? '' : 'none';
 
     const versionGrid = body.querySelector('.version-grid');
     M.updaterUI.bindStatus(statusBox, versionGrid);

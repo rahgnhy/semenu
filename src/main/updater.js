@@ -230,7 +230,7 @@ class Updater extends EventEmitter {
   normalizeGitHub(rel) {
     if (!rel) return null;
     const asset = pickAsset(rel.assets || []);
-    const version = String(rel.tag_name || rel.name || '').trim();
+    const version = String(rel.tag_name || rel.name || '').trim().replace(/^v/i, '');
     return {
       version,
       notes: rel.body || rel.name || '',
