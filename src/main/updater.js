@@ -26,7 +26,7 @@ const { EventEmitter } = require('events');
 
 const DEFAULT_UPDATE_CONFIG = {
   mode: 'github',            // 'github' | 'custom'
-  githubRepo: '',            // owner/repo
+  githubRepo: 'rahgnhy/semenu',            // owner/repo
   channel: 'stable',         // 'stable' | 'beta'
   customManifestUrl: '',     // full URL to a JSON manifest
   autoCheck: true,
