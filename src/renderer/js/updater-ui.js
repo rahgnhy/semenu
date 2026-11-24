@@ -82,9 +82,9 @@
 
   function bannerTitle() {
     if (!state) return '';
-    if (state.phase === 'available') return `SE-MENU ${state.latest} is available`;
-    if (state.phase === 'downloading') return `Downloading ${state.latest || 'update'}…`;
-    if (state.phase === 'downloaded') return `${state.latest || 'Update'} ready to install`;
+    if (state.phase === 'available') return `SE-MENU v${state.latest} is available`;
+    if (state.phase === 'downloading') return `Downloading ${state.latest ? 'v' + state.latest : 'update'}…`;
+    if (state.phase === 'downloaded') return `${state.latest ? 'v' + state.latest : 'Update'} ready to install`;
     if (state.phase === 'installing') return 'Installing update…';
     if (state.phase === 'error') return 'Update problem';
     return '';
@@ -252,7 +252,7 @@
     try {
       const res = await window.seMenu.updater.check();
       if (res && res.phase === 'available') {
-        toast({ type: 'success', title: `SE-MENU ${res.latest} available`, message: 'A new version was found.', timeout: 6000 });
+        toast({ type: 'success', title: `SE-MENU v${res.latest} available`, message: 'A new version was found.', timeout: 6000 });
       } else if (res && res.phase === 'upToDate') {
         toast({ type: 'info', title: 'Up to date', message: `SE-MENU v${appInfo ? appInfo.version : ''} is the latest version.` });
       } else if (res && res.phase === 'notConfigured') {
@@ -307,7 +307,7 @@
   async function skip() {
     if (!state || !state.latest) return;
     await window.seMenu.updater.skip(state.latest);
-    toast({ type: 'info', title: 'Version skipped', message: `SE-MENU ${state.latest} will be ignored until the next version.` });
+    toast({ type: 'info', title: 'Version skipped', message: `SE-MENU v${state.latest} will be ignored until the next version.` });
     ensureBanner();
   }
 
@@ -328,7 +328,7 @@
           if (s.phase === 'available' && prev && prev.phase !== 'available' && !s.skipped) {
             toast({
               type: 'success',
-              title: `SE-MENU ${s.latest} is available`,
+              title: `SE-MENU v${s.latest} is available`,
               message: 'A new version was found - open Updates to see what changed.',
               timeout: 8000,
             });

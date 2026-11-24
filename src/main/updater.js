@@ -298,6 +298,16 @@ class Updater extends EventEmitter {
     this.emit('state', this.state);
   }
 
+  /** Remove infrastructure hostnames from messages surfaced in the UI. */
+  scrub(message) {
+    return String(message || '')
+      .replace(/https?:\/\/api\.github\.com\/repos\/[^\s'\")]+/gi, 'the update service')
+      .replace(/https?:\/\/uploads\.github\.com[^\s'\")]*/gi, 'the update service')
+      .replace(/https?:\/\/(www\.)?github\.com[^\s'\")]*/gi, 'the update service')
+      .replace(/\bgithub\.com\b/gi, 'the update service')
+      .replace(/\bgithub\b/gi, 'the update service');
+  }
+
   async check({ manual = false } = {}) {
     const phase = this.state.phase;
     if (phase === 'downloading' || phase === 'installing') return this.state;
@@ -308,7 +318,7 @@ class Updater extends EventEmitter {
     }
     try {
       const manifest = await this.fetchManifest();
-      if (!manifest || !manifest.version) throw new Error('the release endpoint did not return a usable version');
+      if (!manifest || !manifest.version) throw new Error('the update service did not return a usable version');
       this.manifest = manifest;
       this._set({
         latest: manifest.version,
@@ -332,7 +342,7 @@ class Updater extends EventEmitter {
         this._set({ phase: 'upToDate' });
       }
     } catch (e) {
-      this._set({ phase: 'error', error: e.message });
+      this._set({ phase: 'error', error: this.scrub(e.message) });
     }
     return this.state;
   }
@@ -340,7 +350,7 @@ class Updater extends EventEmitter {
   async download() {
     const m = this.manifest;
     if (!m || !m.downloadUrl) {
-      this._set({ phase: 'error', error: 'no download URL in the release manifest' });
+      this._set({ phase: 'error', error: 'no download URL in the update package' });
       return this.state;
     }
     const fileName = m.fileName || `SE-MENU-Update-${m.version}.bin`;
@@ -384,7 +394,7 @@ class Updater extends EventEmitter {
         this.downloadedPath = finalPath;
         this._set({ phase: 'downloaded', verified: !!(m.sha256 && digest), error: null, progress: { received: total || 1, total: total || 1, percent: 100, speed: 0, eta: 0, phase: 'download' } });
       } catch (e) {
-        this._set({ phase: 'error', error: `download failed: ${e.message}` });
+        this._set({ phase: 'error', error: `download failed: ${this.scrub(e.message)}` });
       }
       return this.state;
     }
@@ -422,7 +432,7 @@ class Updater extends EventEmitter {
       this.downloadedPath = finalPath;
       this._set({ phase: 'downloaded', verified: !!(m.sha256 && digest), error: null });
     } catch (e) {
-      this._set({ phase: 'error', error: `download failed: ${e.message}` });
+      this._set({ phase: 'error', error: `download failed: ${this.scrub(e.message)}` });
     }
     return this.state;
   }
@@ -507,7 +517,7 @@ class Updater extends EventEmitter {
       }
       setTimeout(() => { try { this.app.quit(); } catch (e) { /* noop */ } }, 1200);
     } catch (e) {
-      this._set({ phase: 'error', error: `install failed: ${e.message}` });
+      this._set({ phase: 'error', error: `install failed: ${this.scrub(e.message)}` });
     }
     return this.state;
   }
