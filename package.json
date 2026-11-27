@@ -11,7 +11,7 @@
     "dev": "electron . --dev",
     "selftest": "electron . --selftest",
     "shots": "electron . --shots",
-    "dist": "electron-builder --win",
+    "dist": "electron-builder --win --publish never",
     "icon": "python scripts/make-icon.py",
     "fonts": "node scripts/install-fonts.js",
     "postinstall": "node scripts/install-fonts.js"
