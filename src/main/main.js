@@ -14,11 +14,13 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const { Worker } = require('worker_threads');
 const { SystemProvider } = require('./system');
 const net = require('./net');
 const { Updater } = require('./updater');
+const { extractIl2CppPayloads } = require('./il2cpp-extract');
+const { decryptMetadata, isStockMetadata, IL2CPP_MAGIC } = require('./il2cpp-decrypt');
 
 const DEV = process.argv.includes('--dev');
 const SELFTEST = process.argv.includes('--selftest');
@@ -339,6 +341,10 @@ function buildTray() {
 /* -------------------------------------------------------------- ipc: misc */
 
 function registerIpc() {
+  // Registers an ipcMain handler with the Electron `event` argument already
+  // stripped, so the callback signature is fn(payload, ...rest) - NOT
+  // fn(event, payload). Declaring (event, opts) here silently makes every
+  // payload undefined and the handler fails its own first guard.
   const handle = (channel, fn) => {
     ipcMain.handle(channel, async (event, ...args) => {
       try {
@@ -414,7 +420,7 @@ function registerIpc() {
     }
     return { ok: true, mode };
   };
-  handle('opencode-reset:start', (event, opts) => {
+  handle('opencode-reset:start', (opts) => {
     const mode = (opts && opts.mode) === 'terminal' ? 'terminal' : 'app';
     if (opencodeResetProcs[mode] && !opencodeResetProcs[mode].killed) {
       return { ok: false, error: 'already running', mode };
@@ -475,14 +481,14 @@ function registerIpc() {
       return { ok: false, error: e.message, mode };
     }
   });
-  handle('opencode-reset:stop', (event, opts) => {
+  handle('opencode-reset:stop', (opts) => {
     const mode = opts && opts.mode;
     if (mode === 'app' || mode === 'terminal') return stopOpencodeResetMode(mode);
     stopOpencodeResetMode('app');
     stopOpencodeResetMode('terminal');
     return { ok: true };
   });
-  handle('opencode-reset:write', (event, data) => {
+  handle('opencode-reset:write', (data) => {
     // legacy/no-op in external launcher modes
     return { ok: false, error: 'not running in embedded mode (use the launcher window for input)' };
   });
@@ -540,7 +546,7 @@ function registerIpc() {
     return { ok: true, path: p, name: path.basename(p) };
   });
 
-  handle('il2cpp:dump', async (event, opts) => {
+  handle('il2cpp:dump', async (opts) => {
     const apkPath = opts && opts.apkPath;
     const xorKeyHex = (opts && opts.xorKey) ? String(opts.xorKey).trim() : '';
     if (!apkPath || !fs.existsSync(apkPath)) return { ok: false, error: 'APK not found' };
@@ -554,86 +560,68 @@ function registerIpc() {
     try { fs.mkdirSync(extractDir, { recursive: true }); } catch (e) { /* noop */ }
     try { fs.mkdirSync(outDir, { recursive: true }); } catch (e) { /* noop */ }
 
-    // 1. extract APK (zip) via PowerShell
-    try {
-      const ps = [
-        'try {',
-        `  Expand-Archive -LiteralPath '${apkPath.replace(/'/g, "''")}' -DestinationPath '${extractDir.replace(/'/g, "''")}' -Force`,
-        '  exit 0',
-        '} catch {',
-        '  Write-Error $_.Exception.Message; exit 1',
-        '}',
-      ].join('; ');
-      const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { windowsHide: true, encoding: 'utf8' });
-      if (r.status !== 0) {
-        return { ok: false, error: 'APK extraction failed: ' + (r.stderr || r.stdout || 'unknown') };
-      }
-    } catch (e) {
-      return { ok: false, error: 'APK extraction failed: ' + e.message };
-    }
-
-    // 2. find libil2cpp.so and global-metadata.dat
+    // 1. pull only the two IL2CPP payloads straight out of the zip.
+    // (see il2cpp-extract.js: Expand-Archive rejects .apk, and full extraction
+    //  of a 500 MB game to read two files is minutes of wasted work)
     let libPath = '';
     let metaPath = '';
     let arch = '';
     try {
-      const findPs = [
-        `$root = '${extractDir.replace(/'/g, "''")}'`,
-        `$lib = Get-ChildItem -Path $root -Recurse -Filter 'libil2cpp.so' -ErrorAction SilentlyContinue | Select-Object -First 1`,
-        `$meta = Get-ChildItem -Path $root -Recurse -Filter 'global-metadata.dat' -ErrorAction SilentlyContinue | Select-Object -First 1`,
-        `Write-Output ('LIB=' + $(if($lib){$lib.FullName}else{''}))`,
-        `Write-Output ('META=' + $(if($meta){$meta.FullName}else{''}))`,
-        `Write-Output ('ARCH=' + $(if($lib){$lib.DirectoryName}else{''}))`,
-      ].join('; ');
-      const fr = spawnSync('powershell.exe', ['-NoProfile', '-Command', findPs], { windowsHide: true, encoding: 'utf8' });
-      const lines = String(fr.stdout || '').split(/\r?\n/);
-      for (const ln of lines) {
-        const t = ln.trim();
-        if (t.startsWith('LIB=')) libPath = t.slice(4);
-        else if (t.startsWith('META=')) metaPath = t.slice(5);
-        else if (t.startsWith('ARCH=')) {
-          const d = t.slice(5);
-          const m = d.match(/lib[\\\/]([^\\\/]+)/);
-          if (m) arch = m[1];
-        }
-      }
-    } catch (e) { /* noop */ }
+      const found = extractIl2CppPayloads(apkPath, extractDir);
+      libPath = found.libPath;
+      metaPath = found.metaPath;
+      arch = found.arch;
+    } catch (e) {
+      return { ok: false, error: e.message, outDir, extractDir };
+    }
 
     if (!libPath) return { ok: false, error: 'libil2cpp.so not found in APK (is this a Unity/IL2CPP game?)', outDir, extractDir };
     if (!metaPath) return { ok: false, error: 'global-metadata.dat not found in APK', outDir, extractDir };
 
-    // detect encryption: standard magic 0xFAB11BAF (little-endian)
-    let encrypted = false;
-    try {
-      const mb = fs.readFileSync(metaPath);
-      const magic = mb.readUInt32LE(0);
-      if (magic !== 0xFAB11BAF) encrypted = true;
-    } catch (e) { /* noop */ }
-
-    // apply XOR key if provided
+    // 2. decrypt if the file is not already stock metadata.
+    // A stock file starts with 0xFAB11BAF. The GILLA protector replaces that with a
+    // ciphertext container, which the old "XOR key" field could never open - there is
+    // no repeating key to find. il2cpp-decrypt.js derives the real parameters from the
+    // matching libil2cpp.so and rebuilds a stock v31 file the dumper can read.
+    const metaBuf = fs.readFileSync(metaPath);
     let metaToUse = metaPath;
-    if (xorKeyHex) {
-      try {
-        const keyBytes = Buffer.from(xorKeyHex.replace(/\s+/g, ''), 'hex');
-        if (keyBytes.length === 0) throw new Error('empty key');
-        const mb = fs.readFileSync(metaPath);
-        const out = Buffer.alloc(mb.length);
-        for (let i = 0; i < mb.length; i++) out[i] = mb[i] ^ keyBytes[i % keyBytes.length];
-        metaToUse = path.join(outDir, 'global-metadata.dec.dat');
-        fs.writeFileSync(metaToUse, out);
-        // verify
-        if (out.readUInt32LE(0) !== 0xFAB11BAF) {
-          return { ok: false, error: 'XOR key did not produce valid metadata magic. Check the key.', outDir, extractDir, libPath, metaPath, encrypted: true };
+    let decryptReport = null;
+    if (!isStockMetadata(metaBuf)) {
+      if (xorKeyHex) {
+        // legacy path: a plain repeating-XOR protector, key supplied by hand
+        try {
+          const keyBytes = Buffer.from(xorKeyHex.replace(/\s+/g, ''), 'hex');
+          if (!keyBytes.length) throw new Error('empty key');
+          const out = Buffer.alloc(metaBuf.length);
+          for (let i = 0; i < metaBuf.length; i++) out[i] = metaBuf[i] ^ keyBytes[i % keyBytes.length];
+          if (out.readUInt32LE(0) !== IL2CPP_MAGIC) {
+            return {
+              ok: false,
+              error: 'XOR key did not produce valid metadata magic. Check the key.',
+              outDir, extractDir, libPath, metaPath, encrypted: true,
+            };
+          }
+          metaToUse = path.join(outDir, 'global-metadata.dec.dat');
+          fs.writeFileSync(metaToUse, out);
+          decryptReport = { mode: 'xor', outputSize: out.length };
+        } catch (e) {
+          return { ok: false, error: 'XOR decrypt failed: ' + e.message, outDir, extractDir };
         }
-      } catch (e) {
-        return { ok: false, error: 'XOR decrypt failed: ' + e.message, outDir, extractDir };
+      } else {
+        try {
+          const libBuf = fs.readFileSync(libPath);
+          const { data, report } = decryptMetadata(metaBuf, libBuf);
+          metaToUse = path.join(outDir, 'global-metadata.dec.dat');
+          fs.writeFileSync(metaToUse, data);
+          decryptReport = { mode: 'container', ...report };
+        } catch (e) {
+          return {
+            ok: false,
+            error: e.message,
+            outDir, extractDir, libPath, metaPath, encrypted: true,
+          };
+        }
       }
-    } else if (encrypted) {
-      return {
-        ok: false,
-        error: 'Metadata is encrypted/obfuscated (magic mismatch). Standard Il2CppDumper cannot read it. Provide a repeating XOR key (hex) if you know it, or use a game-specific deobfuscator.',
-        outDir, extractDir, libPath, metaPath, encrypted: true,
-      };
     }
 
     // 3. run Il2CppDumper
@@ -675,14 +663,17 @@ function registerIpc() {
       libPath,
       metaPath,
       arch: arch || 'unknown',
-      encrypted: !!encrypted,
-      metaPath,
+      encrypted: !!decryptReport,
+      decrypted: !!decryptReport,
+      decrypt: decryptReport,
       files,
-      log: 'Dumped ' + files.length + ' files.',
+      log: decryptReport
+        ? `Decrypted (${decryptReport.mode}) and dumped ${files.length} files.`
+        : `Dumped ${files.length} files.`,
     };
   });
 
-  handle('il2cpp:readFile', (event, opts) => {
+  handle('il2cpp:readFile', (opts) => {
     const p = opts && opts.path;
     if (!p || !fs.existsSync(p)) return { ok: false, error: 'file not found' };
     try {
@@ -700,7 +691,7 @@ function registerIpc() {
     }
   });
 
-  handle('il2cpp:saveFile', (event, opts) => {
+  handle('il2cpp:saveFile', (opts) => {
     const p = opts && opts.path;
     if (!p) return { ok: false, error: 'no path' };
     try {
@@ -711,7 +702,7 @@ function registerIpc() {
     }
   });
 
-  handle('il2cpp:downloadFile', (event, opts) => {
+  handle('il2cpp:downloadFile', (opts) => {
     const p = opts && opts.path;
     if (!p || !fs.existsSync(p)) return { ok: false, error: 'file not found' };
     try {
@@ -724,7 +715,7 @@ function registerIpc() {
     }
   });
 
-  handle('il2cpp:downloadAll', (event, opts) => {
+  handle('il2cpp:downloadAll', (opts) => {
     const outDir = opts && opts.outDir;
     if (!outDir || !fs.existsSync(outDir)) return { ok: false, error: 'output folder not found' };
     try {
@@ -746,7 +737,7 @@ function registerIpc() {
     }
   });
 
-  handle('il2cpp:openFolder', (event, opts) => {
+  handle('il2cpp:openFolder', (opts) => {
     const p = opts && opts.path;
     if (!p) return { ok: false, error: 'no path' };
     try {

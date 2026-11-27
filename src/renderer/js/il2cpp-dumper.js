@@ -116,8 +116,8 @@
         ),
         h('div', { id: 'icd-status-text', class: 'icd-status-text', text: 'Drop an .apk or click Browse to begin.' }),
         h('div', { style: 'display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap;' },
-          h('label', { style: 'font-family:var(--font-mono);font-size:11px;color:var(--text-2);', text: 'XOR key (hex, optional):' }),
-          h('input', { id: 'icd-xorkey', type: 'text', class: 'input mono', placeholder: 'e.g. 5DE8450F (for encrypted metadata)', style: 'flex:1;min-width:180px;font-size:12px;' }),
+          h('label', { style: 'font-family:var(--font-mono);font-size:11px;color:var(--text-2);', text: 'Legacy XOR key (hex, optional):' }),
+          h('input', { id: 'icd-xorkey', type: 'text', class: 'input mono', placeholder: 'leave empty - obfuscated metadata is decrypted automatically', style: 'flex:1;min-width:180px;font-size:12px;' }),
         ),
         h('div', { style: 'display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;' },
           h('button', { class: 'btn btn-sm btn-primary', id: 'icd-run' },
@@ -254,7 +254,11 @@
         return;
       }
       S.result = res;
-      setState('done', `Done. ${res.files.length} files generated.`);
+      const d = res.decrypt;
+      const extra = d && d.mode === 'container'
+        ? ` Decrypted container (seed ${d.headerSeed}, ${d.counts.typeDefinitions} types).`
+        : (d && d.mode === 'xor' ? ' Decrypted with supplied XOR key.' : '');
+      setState('done', `Done. ${res.files.length} files generated.${extra}`);
       renderDetected(res.detected);
       renderOutput(res.files);
       const ofb = $('#icd-open-folder', S.root);
@@ -283,7 +287,7 @@
       ['libil2cpp.so', det.lib || 'not found'],
       ['global-metadata.dat', det.metadata || 'not found'],
       ['architecture', det.arch || 'unknown'],
-      ['metadata encrypted', det.encrypted ? 'YES - provide XOR key above' : 'no'],
+      ['metadata encrypted', det.encrypted ? 'YES - decrypted automatically' : 'no'],
     ];
     for (const [k, v] of rows) {
       const row = h('div', { style: 'display:flex;gap:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.05);' },
