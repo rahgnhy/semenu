@@ -14,7 +14,8 @@
     "dist": "electron-builder --win --publish never",
     "icon": "python scripts/make-icon.py",
     "fonts": "node scripts/install-fonts.js",
-    "postinstall": "node scripts/install-fonts.js"
+    "postinstall": "node scripts/install-fonts.js",
+    "test:il2cpp": "node scripts/test-il2cpp-pipeline.js"
   },
   "devDependencies": {
     "electron": "^33.4.11",

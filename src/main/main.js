@@ -21,6 +21,8 @@ const net = require('./net');
 const { Updater } = require('./updater');
 const { extractIl2CppPayloads } = require('./il2cpp-extract');
 const { decryptMetadata, isStockMetadata, IL2CPP_MAGIC } = require('./il2cpp-decrypt');
+const { validateMetadata, repairMetadata } = require('./il2cpp-metadata');
+const { createQuery, summarise } = require('./il2cpp-query');
 
 const DEV = process.argv.includes('--dev');
 const SELFTEST = process.argv.includes('--selftest');
@@ -534,6 +536,15 @@ function registerIpc() {
   };
   const il2cppExePath = () => path.join(il2cppToolPath(), 'Il2CppDumper.exe');
 
+  /* ---------- il2cpp analysis helpers ---------- */
+
+  const il2cppCacheDir = () => {
+    const dir = path.join(app.getPath('userData'), 'il2cpp-index');
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (e) { /* noop */ }
+    return dir;
+  };
+  const il2cppQuery = createQuery({ cacheDir: il2cppCacheDir });
+
   handle('il2cpp:pickApk', async () => {
     const { dialog } = require('electron');
     const res = await dialog.showOpenDialog(win, {
@@ -624,21 +635,91 @@ function registerIpc() {
       }
     }
 
-    // 3. run Il2CppDumper
+    // 3. validate the metadata and repair it in memory when it is not stock.
+    // The repairer never guesses: every change is recorded in `repairs`, and
+    // anything it cannot recover is listed in `uncertain` and passed through
+    // to the caller untouched.
+    const decMetaPath = metaToUse;
+    const metaBefore = validateMetadata(fs.readFileSync(decMetaPath));
+    let repairReport = null;
+    if (!metaBefore.ok) {
+      const repaired = repairMetadata(fs.readFileSync(decMetaPath));
+      if (repaired.data) {
+        metaToUse = path.join(outDir, 'global-metadata.repaired.dat');
+        fs.writeFileSync(metaToUse, repaired.data);
+        repairReport = {
+          applied: repaired.repairs,
+          uncertain: repaired.uncertain,
+          okAfter: repaired.report.ok,
+          issuesAfter: repaired.report.issues,
+        };
+      }
+    }
+
+    // 4. run Il2CppDumper. It exits 0 even when it throws, so the only proof of
+    // success is dump.cs existing; the log is kept either way.
+    let dumperLog = '';
+    let registrationVa = 0;
     try {
       const r = spawnSync(exe, [libPath, metaToUse, outDir], { cwd: il2cppToolPath(), windowsHide: true, encoding: 'utf8', timeout: 10 * 60 * 1000, maxBuffer: 1024 * 1024 * 64 });
-      if (r.status !== 0 && r.status !== null) {
-        // non-zero may still have produced output; only fail if no dump.cs
-      }
-      const dumpCs = path.join(outDir, 'dump.cs');
-      if (!fs.existsSync(dumpCs)) {
-        return { ok: false, error: 'Il2CppDumper did not produce dump.cs. ' + (r.stderr || r.stdout || '').slice(0, 500), outDir, extractDir, libPath, metaPath };
+      dumperLog = `${r.stdout || ''}${r.stderr || ''}`;
+      try { fs.writeFileSync(path.join(outDir, 'il2cppdumper.log'), dumperLog); } catch (e) { /* noop */ }
+      const m = /MetadataRegistration\s*:\s*([0-9a-f]+)/i.exec(dumperLog);
+      if (m) registrationVa = parseInt(m[1], 16);
+      if (!fs.existsSync(path.join(outDir, 'dump.cs'))) {
+        return {
+          ok: false,
+          error: 'Il2CppDumper did not produce dump.cs. ' + (dumperLog || '').slice(-800),
+          outDir, extractDir, libPath, metaPath, metaToUse,
+          metaReport: {
+            version: metaBefore.version,
+            okBefore: metaBefore.ok,
+            issues: metaBefore.issues,
+            repairs: repairReport ? repairReport.applied : [],
+            okAfter: repairReport ? repairReport.okAfter : metaBefore.ok,
+          },
+        };
       }
     } catch (e) {
       return { ok: false, error: 'Il2CppDumper failed: ' + e.message, outDir, extractDir };
     }
 
-    // 4. collect output files
+    // 5. analyse what came out: metadata structure, dump.cs, the binary and the
+    // agreement between them. This runs after the dump, so a failure here is
+    // reported as a warning rather than losing files that already exist.
+    let analysis = null;
+    let analysisError = null;
+    try {
+      const { report, index, roleMap } = await analyseDump({
+        metaPath: decMetaPath,
+        dumpPath: path.join(outDir, 'dump.cs'),
+        libPath,
+        registrationVa,
+        cacheDir: il2cppCacheDir(),
+        writeRepairedTo: path.join(outDir, 'global-metadata.repaired.dat'),
+      });
+      const written = writeReports(report, outDir, { index, roleMap });
+      analysis = { ...summarise(report), files: written.files };
+    } catch (e) {
+      analysisError = e.message;
+    }
+
+    try {
+      fs.writeFileSync(path.join(outDir, 'pipeline.json'), JSON.stringify({
+        apkPath,
+        outDir,
+        extractDir,
+        libPath,
+        metaPath,
+        decryptedMetaPath: decMetaPath,
+        repairedMetaPath: fs.existsSync(path.join(outDir, 'global-metadata.repaired.dat'))
+          ? path.join(outDir, 'global-metadata.repaired.dat') : null,
+        registrationVa,
+        generatedAt: new Date().toISOString(),
+      }, null, 2));
+    } catch (e) { /* noop */ }
+
+    // 6. collect output files
     const files = [];
     function walk(dir, base) {
       let entries = [];
@@ -656,21 +737,70 @@ function registerIpc() {
     }
     walk(outDir, outDir);
 
+    const metaSummary = {
+      version: metaBefore.version,
+      okBefore: metaBefore.ok,
+      okAfter: repairReport ? repairReport.okAfter : metaBefore.ok,
+      counts: metaBefore.counts,
+      issues: metaBefore.issues,
+      repairs: repairReport ? repairReport.applied : [],
+      uncertain: [
+        ...(metaBefore.uncertain || []),
+        ...(repairReport ? repairReport.uncertain : []),
+      ],
+    };
+
     return {
       ok: true,
       outDir,
       extractDir,
       libPath,
       metaPath,
+      metaToUse,
       arch: arch || 'unknown',
       encrypted: !!decryptReport,
       decrypted: !!decryptReport,
       decrypt: decryptReport,
+      metaReport: metaSummary,
+      analysis,
+      analysisError,
+      registrationVa,
       files,
-      log: decryptReport
-        ? `Decrypted (${decryptReport.mode}) and dumped ${files.length} files.`
-        : `Dumped ${files.length} files.`,
+      log: analysis
+        ? `Dumped ${files.length} files. Analysis: ${analysis.verdict} (${analysis.verdictReasons.join('; ') || 'no issues'}).`
+        : `Dumped ${files.length} files. Analysis failed: ${analysisError}`,
     };
+  });
+
+  /* Re-run the analysis over an existing output folder. The manifest written by
+     il2cpp:dump makes this self-describing: no paths need to be supplied. */
+  handle('il2cpp:analyse', async (opts) => {
+    try {
+      const res = await il2cppQuery.analyseDir(opts || {});
+      if (!res.ok) return res;
+      return {
+        ok: true,
+        outDir: res.outDir,
+        metaPath: res.metaPath,
+        registrationVa: res.registrationVa,
+        ...res.summary,
+        files: res.files,
+      };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* Search the parsed dump. Results carry a line number so the UI can jump. */
+  handle('il2cpp:search', async (opts) => {
+    try { return await il2cppQuery.searchDump(opts || {}); }
+    catch (e) { return { ok: false, error: e.message, total: 0, hits: [] }; }
+  });
+
+  /* One type, its members, its inferred role and its source region. */
+  handle('il2cpp:typeDetail', async (opts) => {
+    try { return await il2cppQuery.typeDetail(opts || {}); }
+    catch (e) { return { ok: false, error: e.message }; }
   });
 
   handle('il2cpp:readFile', (opts) => {

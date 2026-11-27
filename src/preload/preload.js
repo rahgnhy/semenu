@@ -122,6 +122,9 @@ contextBridge.exposeInMainWorld('seMenu', {
   il2cpp: {
     pickApk: () => invoke('il2cpp:pickApk'),
     dump: opts => invoke('il2cpp:dump', opts),
+    analyse: opts => invoke('il2cpp:analyse', opts),
+    search: opts => invoke('il2cpp:search', opts),
+    typeDetail: opts => invoke('il2cpp:typeDetail', opts),
     readFile: opts => invoke('il2cpp:readFile', opts),
     saveFile: opts => invoke('il2cpp:saveFile', opts),
     downloadFile: opts => invoke('il2cpp:downloadFile', opts),
