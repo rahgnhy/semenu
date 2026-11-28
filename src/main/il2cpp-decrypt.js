@@ -37,39 +37,129 @@
    ========================================================================== */
 'use strict';
 
-const HEADER_SIZE = 0x5E8;      // descriptor table
-const SECTION_BASE = 0xFA8;     // first real section
-const TABLE_VA = 0x182E7F3;     // 256-byte substitution box inside libil2cpp.so
 const TABLE_SIZE = 256;
 
-// descriptor index -> cipher seed, big-endian hex (None = stored in the clear)
-const SEED_HEX = {
-  48: 'EA338D80C764B829',
-  69: 'B3C78D264A9AB44F',
-  63: '6E63EC6F7A1442F0',
-  34: 'D352E95AE3D142CB',
-  23: 'FF440E012182730C',
-  14: '4E3F398A310E48CB',
-  5: '5F2902BE8286FA65',
+/* ============================================================================
+   Build profiles
+
+   The container is a per-build artefact, not a format: the header width, the
+   order of the three int32 fields inside each descriptor row, which row carries
+   which stock section, which rows are enciphered and with what seed, and where
+   each row's bytes physically start all change between builds. The only stable
+   thing is the stock v31 layout on the other side of the conversion.
+
+   So everything build-specific lives in one entry here, and the reader below is
+   build-agnostic: it asks the profile for the field order, maps rows to stock
+   section names, and measures every section against its own content rule before
+   accepting it. Adding a build means adding an entry, not editing the reader.
+
+   Positions
+     'tiled'  the sections are packed back to back from sectionBase, each
+              starting at the next 4-byte boundary
+     'biased' the descriptor's offset field is the row's position in the
+              decrypted file, and the physical position in the container is
+              that plus a per-row bias materialised in libil2cpp.so. The bias
+              absorbs the container's own gaps, which are not a constant.
+
+   The two profiles below were derived by measurement, not by resemblance:
+   every section is named by a rule its plaintext cannot violate (a name index
+   must land on a NUL-terminated printable run, a container's argc must sum to
+   the parameter table length, offsets must tile the literal pool).
+   ========================================================================== */
+
+const PROFILES = {
+  /* 2025 build: 0x5E8 header, 126 rows of {offset, count, size}, sequential
+     packing from 0xFA8, seven enciphered rows. */
+  'gilla-v1': {
+    id: 'gilla-v1',
+    label: 'GILLA container, 0x5E8 header, 126 descriptors, sequential packing',
+    headerSize: 0x5E8,
+    rows: 126,
+    fields: ['offset', 'count', 'size'],
+    positions: 'tiled',
+    sectionBase: 0xFA8,
+    align: 4,
+    table: { va: 0x182E7F3 },
+    headerSeed: null,
+    order: [48, 69, 63, 97, 34, 23, 22, 73, 46, 36, 41, 14, 32, 3, 2,
+      31, 59, 4, 106, 118, 84, 5, 1, 71, 98, 90, 116, 85, 67],
+    role: {
+      48: 'stringLiteral', 69: 'stringLiteralData', 63: 'string',
+      97: 'events', 34: 'properties', 23: 'methods',
+      22: 'parameterDefaultValues', 73: 'fieldDefaultValues',
+      46: 'fieldAndParameterDefaultValueData', 36: 'fieldMarshaledSizes',
+      41: 'parameters', 14: 'fields', 32: 'genericParameters',
+      3: 'genericParameterConstraints', 2: 'genericContainers',
+      31: 'nestedTypes', 59: 'interfaces', 4: 'vtableMethods',
+      106: 'interfaceOffsets', 118: 'typeDefinitions', 84: 'images',
+      5: 'assemblies', 1: null, 71: null, 98: 'attributeData',
+      90: 'attributeDataRange', 116: null, 85: null, 67: 'fieldRefs',
+    },
+    seeds: {
+      48: 'EA338D80C764B829', 69: 'B3C78D264A9AB44F', 63: '6E63EC6F7A1442F0',
+      34: 'D352E95AE3D142CB', 23: 'FF440E012182730C', 14: '4E3F398A310E48CB',
+      5: '5F2902BE8286FA65',
+    },
+  },
+
+  /* 2026 build: 0x5B8 header, 122 rows of {size, count, offset} - the triple is
+     reversed - and the sections are no longer packed sequentially: each row's
+     physical position is its descriptor offset plus a bias that differs per
+     row. Seven rows are enciphered, and they are not the same seven as v1:
+     assemblies carries a seed here, events does not. */
+  'gilla-v2': {
+    id: 'gilla-v2',
+    label: 'GILLA container, 0x5B8 header, 122 descriptors, per-row biased packing',
+    headerSize: 0x5B8,
+    rows: 122,
+    fields: ['size', 'count', 'offset'],
+    positions: 'biased',
+    align: 4,
+    table: { file: 0x185635B },
+    headerSeed: '321A13EB2C481603',
+    order: [61, 56, 120, 58, 38, 51, 57, 79, 102, 0, 9, 53, 116, 49, 104,
+      76, 88, 44, 47, 77, 117, 113, 101, 74, 39, 26, 83, 60, 112],
+    role: {
+      61: 'stringLiteral', 56: 'stringLiteralData', 120: 'string',
+      58: 'events', 38: 'properties', 51: 'methods',
+      57: 'parameterDefaultValues', 79: 'fieldDefaultValues',
+      102: 'fieldAndParameterDefaultValueData', 0: 'fieldMarshaledSizes',
+      9: 'parameters', 53: 'fields', 116: 'genericParameters',
+      49: 'genericParameterConstraints', 104: 'genericContainers',
+      76: 'nestedTypes', 88: 'interfaces', 44: 'vtableMethods',
+      47: 'interfaceOffsets', 77: 'typeDefinitions', 117: 'images',
+      113: 'assemblies', 101: null, 74: 'referencedAssemblies',
+      39: 'attributeData', 26: 'attributeDataRange',
+      83: 'unresolvedVirtualCallParameterTypes',
+      60: 'unresolvedVirtualCallParameterRanges', 112: 'fieldRefs',
+    },
+    /* measured: chain position minus the descriptor's own offset, per row.
+       Row 49 is +1916, not +1914: the parameter table ends 2 bytes before the
+       next 4-byte boundary and the container aligns the constraint table, so a
+       tiling that starts it 2 bytes early shifts every constraint by one slot.
+       That shift handed System.Nullable`1's T a method constraint and made
+       Il2CppDumper cast a TypeDefinition to a MethodDefinition. */
+    bias: {
+      61: -7468, 56: -3016, 120: 6472, 58: -7956, 38: 5524, 51: 5872,
+      57: 2468, 79: 1536, 102: 4188, 0: 3108, 9: -3564, 53: -1180,
+      116: -3776, 49: 1916, 104: -1732, 76: 7496, 88: -596, 44: -4996,
+      47: -6248, 77: 4320, 117: 236, 113: 3652, 101: -6336, 74: -3576,
+      39: 4020, 26: -2220, 83: -4600, 60: 7132, 112: -2400,
+    },
+    seeds: {
+      61: '4725E117EDE2EF3A', 56: 'EB8440895BAEAB25', 120: 'B5E04259FDC1473E',
+      38: '4A73B50C89FBC9FE', 51: '2A9247D5BD6AEB4F', 53: '23A902BF85864D86',
+      113: '8B80533498DB7117',
+    },
+  },
 };
 
-// physical packing order, verified against every content anchor in the file
-const ORDER = [48, 69, 63, 97, 34, 23, 22, 73, 46, 36, 41, 14, 32, 3, 2,
-  31, 59, 4, 106, 118, 84, 5, 1, 71, 98, 90, 116, 85, 67];
+const PROFILE_LIST = [PROFILES['gilla-v1'], PROFILES['gilla-v2']];
 
-// descriptor index -> stock v31 section name (null = obfuscator-only, dropped)
-const ROLE = {
-  48: 'stringLiteral', 69: 'stringLiteralData', 63: 'string',
-  97: 'events', 34: 'properties', 23: 'methods',
-  22: 'parameterDefaultValues', 73: 'fieldDefaultValues',
-  46: 'fieldAndParameterDefaultValueData', 36: 'fieldMarshaledSizes',
-  41: 'parameters', 14: 'fields', 32: 'genericParameters',
-  3: 'genericParameterConstraints', 2: 'genericContainers',
-  31: 'nestedTypes', 59: 'interfaces', 4: 'vtableMethods',
-  106: 'interfaceOffsets', 118: 'typeDefinitions', 84: 'images',
-  5: 'assemblies', 1: null, 71: null, 98: 'attributeData',
-  90: 'attributeDataRange', 116: null, 85: null, 67: 'fieldRefs',
-};
+/* The reference profile's row numbers, kept as names for the callers that still
+   address sections by index (the round-trip test builds its container that way). */
+const ORDER = PROFILES['gilla-v1'].order;
+const ROLE = PROFILES['gilla-v1'].role;
 
 const STOCK_ORDER = [
   'stringLiteral', 'stringLiteralData', 'string', 'events', 'properties',
@@ -95,8 +185,53 @@ function splitSeed(hex) {
   return { lo: parseInt(hex.slice(8), 16) >>> 0, hi: parseInt(hex.slice(0, 8), 16) >>> 0 };
 }
 
-const SEEDS = {};
-for (const k of Object.keys(SEED_HEX)) SEEDS[k] = splitSeed(SEED_HEX[k]);
+const SEED_CACHE_BY_PROFILE = new Map();
+
+/** Split the profile's big-endian seed hex into the two 32-bit halves. */
+function profileSeeds(profile) {
+  const hit = SEED_CACHE_BY_PROFILE.get(profile.id);
+  if (hit) return hit;
+  const out = {};
+  for (const [row, hex] of Object.entries(profile.seeds || {})) out[row] = splitSeed(hex);
+  SEED_CACHE_BY_PROFILE.set(profile.id, out);
+  return out;
+}
+
+/**
+ * A role-keyed view of a section map.
+ *
+ * Sections are addressed by what they are, not by which row carried them: the
+ * row number is the one thing that changes between builds. Callers that still
+ * pass a row-keyed map (the round-trip test) are resolved through the reference
+ * profile, so both spellings mean the same thing.
+ */
+function byRole(sec, profile) {
+  const p = profile || PROFILES['gilla-v1'];
+  const out = {};
+  for (const [key, value] of Object.entries(sec || {})) {
+    if (!Buffer.isBuffer(value)) continue;
+    const role = /^\d+$/.test(key) ? p.role[Number(key)] : key;
+    if (role) out[role] = value;
+  }
+  return out;
+}
+
+/** Same key resolution for the descriptor map, whose values are objects. */
+function resolveDesc(desc, profile) {
+  if (!desc) return null;
+  const p = profile || PROFILES['gilla-v1'];
+  const out = {};
+  for (const [key, value] of Object.entries(desc)) {
+    const role = /^\d+$/.test(key) ? p.role[Number(key)] : key;
+    if (role) out[role] = value;
+  }
+  return out;
+}
+
+/** Row numbers in physical order, for a role-keyed section map. */function rowOfRole(profile, role) {
+  for (const row of profile.order) if (profile.role[row] === role) return row;
+  return null;
+}
 
 /** Read a u64 that is guaranteed to fit in a double. */
 function readU64(buf, off) {
@@ -104,7 +239,9 @@ function readU64(buf, off) {
 }
 
 function hex64(seed) {
-  return (seed.hi * 0x100000000 + seed.lo).toString(16).padStart(16, '0');
+  /* Concatenated, not summed: hi * 2^32 exceeds 2^53 for every real seed, so
+     arithmetic here silently rounds the low half (…2c481603 printed as …2c481600). */
+  return seed.hi.toString(16).padStart(8, '0') + seed.lo.toString(16).padStart(8, '0');
 }
 
 /* ------------------------------------------------------------------ ELF map */
@@ -185,7 +322,8 @@ function xorBytes(data, table, lo, hi) {
  * pool - doing that twice (once to pick the table, once to pick the seed) was
  * pure waste.
  */
-function findSBoxTable(lib, meta) {
+function findSBoxTable(lib, meta, profile, opts) {
+  const p = profile || PROFILES['gilla-v1'];
   const va2off = buildVa2Off(lib);
   const pool = seedConstants(lib);
   const tried = [];
@@ -202,23 +340,36 @@ function findSBoxTable(lib, meta) {
     let bestScore = 0;
     let bestSeed = null;
     for (const seed of pool) {
-      const s = scoreHeader(table, meta, seed);
+      const s = scoreHeader(table, meta, seed, p);
       if (s > bestScore) { bestScore = s; bestSeed = seed; }
     }
     return { score: bestScore, seed: bestSeed };
   };
 
-  try {
-    const off = va2off(TABLE_VA);
-    if (off >= 0 && off + TABLE_SIZE <= lib.length) {
-      const table = lib.subarray(off, off + TABLE_SIZE);
-      const { score, seed } = scoreOf(table);
-      tried.push({ va: TABLE_VA, score, source: 'known' });
-      if (score >= 8) {
-        return { table, va: TABLE_VA, source: 'known', score, seed, tried, pool: pool.length };
-      }
+  /* The profile records where its build keeps the S-box: a virtual address when
+     the loader leaves it in a mapped segment, a file offset when it does not. */
+  const hint = p.table || {};
+  if (hint.file !== undefined && hint.file + TABLE_SIZE <= lib.length) {
+    const table = lib.subarray(hint.file, hint.file + TABLE_SIZE);
+    const { score, seed } = scoreOf(table);
+    tried.push({ fileOffset: hint.file, score, source: 'known-file' });
+    if (score >= 8) {
+      return { table, va: null, fileOffset: hint.file, source: 'known-file', score, seed, tried, pool: pool.length };
     }
-  } catch (e) { /* the known address is not mapped in this build */ }
+  }
+  if (hint.va !== undefined) {
+    try {
+      const off = va2off(hint.va);
+      if (off >= 0 && off + TABLE_SIZE <= lib.length) {
+        const table = lib.subarray(off, off + TABLE_SIZE);
+        const { score, seed } = scoreOf(table);
+        tried.push({ va: hint.va, score, source: 'known' });
+        if (score >= 8) {
+          return { table, va: hint.va, source: 'known', score, seed, tried, pool: pool.length };
+        }
+      }
+    } catch (e) { /* the known address is not mapped in this build */ }
+  }
 
   /* A sliding window keeps this O(n): the window holds a 0..255 permutation
      exactly when all 256 bytes are distinct, and an instruction stream almost
@@ -265,6 +416,7 @@ function findSBoxTable(lib, meta) {
     }
   }
   if (best) return { ...best, tried, pool: pool.length };
+  if (opts && opts.hintsOnly) return null;
 
   const err = new Error(
     'no 256-byte S-box permutation in libil2cpp.so produced a readable descriptor table');
@@ -352,16 +504,17 @@ function seedConstants(lib) {
  * This is the only oracle available - the 0x5E8 plaintext is the descriptor
  * table itself, so there is no magic number to check against.
  */
-function scoreHeader(table, meta, seed) {
-  const hdr = xorBytes(meta.subarray(0, HEADER_SIZE), table, seed.lo, seed.hi);
+function scoreHeader(table, meta, seed, profile) {
+  const p = profile || PROFILES['gilla-v1'];
+  if (meta.length < p.headerSize) return 0;
+  const hdr = xorBytes(meta.subarray(0, p.headerSize), table, seed.lo, seed.hi);
   let n = 0;
-  for (let i = 0; i < 126; i++) {
-    const off = hdr.readInt32LE(i * 12);
-    const count = hdr.readInt32LE(i * 12 + 4);
-    const size = hdr.readInt32LE(i * 12 + 8);
-    if (count > 0 && count < 1000000 && size > 0 && size < 20000000
-        && size % count === 0 && size / count >= 1 && size / count <= 128
-        && off >= 0 && off < meta.length) {
+  for (let i = 0; i < p.rows; i++) {
+    const row = { offset: 0, count: 0, size: 0 };
+    for (let k = 0; k < 3; k++) row[p.fields[k]] = hdr.readInt32LE(i * 12 + k * 4);
+    if (row.count > 0 && row.count < 1000000 && row.size > 0 && row.size < 20000000
+        && row.size % row.count === 0 && row.size / row.count >= 1 && row.size / row.count <= 128
+        && row.offset >= 0 && row.offset < meta.length) {
       n++;
     }
   }
@@ -467,57 +620,80 @@ function buildStringIndex(bytes) {
 
 /* ---------------------------------------------------------- section layout */
 
-function decryptSections(meta, table, headerSeed, opts) {
-  const hdr = xorBytes(meta.subarray(0, HEADER_SIZE), table, headerSeed.lo, headerSeed.hi);
-  const desc = [];
-  for (let i = 0; i < 126; i++) {
-    desc.push({
-      offset: hdr.readInt32LE(i * 12),
-      count: hdr.readInt32LE(i * 12 + 4),
-      size: hdr.readInt32LE(i * 12 + 8),
-    });
+function decryptSections(meta, table, headerSeed, profile, opts) {
+  const p = profile || PROFILES['gilla-v1'];
+  const hdr = xorBytes(meta.subarray(0, p.headerSize), table, headerSeed.lo, headerSeed.hi);
+  const descByRow = [];
+  const desc = {};
+  for (let i = 0; i < p.rows; i++) {
+    const row = { offset: 0, count: 0, size: 0 };
+    for (let k = 0; k < 3; k++) row[p.fields[k]] = hdr.readInt32LE(i * 12 + k * 4);
+    descByRow.push(row);
+    const role = p.role[i];
+    if (role) desc[role] = row;
   }
 
-  /* Physical position of each real section: sequential tiling from SECTION_BASE.
-     The descriptor's own offset field is the section's position in the *decrypted*
-     file, not in the container - on a real container it points at 10880 for the
-     first section while the bytes start at 0xFA8 - so it is not used to find
-     them. It is used for the one thing it is good for: count/size gives the row
-     stride of every section, which is how the string-literal index is read at the
-     width it was actually written at. */
+  /* Physical position of each real section.
+
+     'tiled' builds pack them back to back from sectionBase, each starting at the
+     next 4-byte boundary; the descriptor's own offset field is the section's
+     position in the *decrypted* file, not in the container, so it is not used to
+     find them. It is used for the one thing it is good for: count/size gives the
+     row stride of every section, which is how the string-literal index is read
+     at the width it was actually written at.
+
+     'biased' builds broke that packing: the descriptor offset is a position in a
+     different file and the container's own gaps are not a constant, so each row
+     carries its measured bias. Tiling such a build is what put the constraint
+     table 2 bytes early and shifted every constraint by one slot. */
   const layout = {};
-  let pos = SECTION_BASE;
-  for (const idx of ORDER) {
-    pos = align4(pos);
-    layout[idx] = { offset: pos, size: desc[idx].size };
-    pos += desc[idx].size;
+  if (p.positions === 'biased') {
+    for (const idx of p.order) {
+      const bias = (p.bias && p.bias[idx]) || 0;
+      layout[idx] = { offset: descByRow[idx].offset + bias, size: descByRow[idx].size, bias };
+    }
+  } else {
+    let pos = p.sectionBase;
+    for (const idx of p.order) {
+      pos = align4(pos);
+      layout[idx] = { offset: pos, size: descByRow[idx].size };
+      pos += descByRow[idx].size;
+    }
+  }
+  const layoutByRole = {};
+  for (const idx of p.order) {
+    const role = p.role[idx];
+    if (role) layoutByRole[role] = layout[idx];
   }
 
+  const seeds = profileSeeds(p);
   const raw = {};
   const sec = {};
   const seedSource = {};
-  for (const idx of ORDER) {
+  for (const idx of p.order) {
     const { offset, size } = layout[idx];
     if (size < 0) {
       throw new Error(`descriptor e${idx} declares a negative size (${size})`);
     }
-    if (offset + size > meta.length) {
+    if (offset < 0 || offset + size > meta.length) {
       throw new Error(`section e${idx} runs past EOF (${meta.length - offset} of ${size} bytes)`);
     }
-    raw[idx] = meta.subarray(offset, offset + size);
-    if (SEEDS[idx]) {
-      sec[idx] = xorBytes(raw[idx], table, SEEDS[idx].lo, SEEDS[idx].hi);
-      seedSource[idx] = 'known';
+    const role = p.role[idx];
+    if (!role) continue;                       // obfuscator-only, not carried
+    raw[role] = meta.subarray(offset, offset + size);
+    if (seeds[idx]) {
+      sec[role] = xorBytes(raw[role], table, seeds[idx].lo, seeds[idx].hi);
+      seedSource[role] = 'known';
     } else {
-      sec[idx] = raw[idx];
-      seedSource[idx] = 'clear';
+      sec[role] = raw[role];
+      seedSource[role] = 'clear';
     }
   }
 
   const recovery = (opts && opts.recover === false)
-    ? [] : recoverSeeds(sec, raw, table, opts && opts.pool);
+    ? [] : recoverSeeds(sec, raw, table, opts && opts.pool, p);
 
-  return { sec, layout, desc, seedSource, recovery };
+  return { sec, raw, layout: layoutByRole, desc, descByRow, seedSource, recovery, profile: p };
 }
 
 /**
@@ -529,7 +705,8 @@ function decryptSections(meta, table, headerSeed, opts) {
  * accepted on resemblance - the probe has to clear the same rule the verifier
  * applies, or the section is left exactly as the hint produced it.
  */
-function recoverSeeds(sec, raw, table, pool) {
+function recoverSeeds(sec, raw, table, pool, profile) {
+  const p = profile || PROFILES['gilla-v1'];
   const log = [];
   if (!pool || !pool.length) return log;
   const PROBE = 4096;
@@ -540,8 +717,8 @@ function recoverSeeds(sec, raw, table, pool) {
      whole pool. */
   const BLOB_PROBE = 262144;
 
-  const probeOf = (idx, bytes) => {
-    const cap = idx === 69 ? BLOB_PROBE : PROBE;
+  const probeOf = (role, bytes) => {
+    const cap = role === 'stringLiteralData' ? BLOB_PROBE : PROBE;
     return bytes && bytes.length > cap ? bytes.subarray(0, cap) : bytes;
   };
 
@@ -550,12 +727,12 @@ function recoverSeeds(sec, raw, table, pool) {
      a 60 ms one. */
   let stringIdx = null;
   const getStringIdx = () => {
-    if (!stringIdx) stringIdx = buildStringIndex(sec[63] || Buffer.alloc(0));
+    if (!stringIdx) stringIdx = buildStringIndex(sec.string || Buffer.alloc(0));
     return stringIdx;
   };
 
   const nameScore = (bytes, stride, nameOffset) => {
-    const strings = sec[63];
+    const strings = sec.string;
     if (!strings || !strings.length) return 0;
     const index = getStringIdx();
     const n = (bytes.length / stride) | 0;
@@ -571,15 +748,15 @@ function recoverSeeds(sec, raw, table, pool) {
   /* Each scorer returns a 0..1 fraction built only from rules the plaintext
      cannot violate. */
   const scorers = {
-    63: (bytes) => {
+    string: (bytes) => {
       const index = buildStringIndex(bytes);
       const { runs, ok } = index.census();
       return runs ? ok / runs : 0;
     },
-    48: (bytes) => {
+    stringLiteral: (bytes) => {
       const n = (bytes.length / 4) | 0;
       if (n < 2) return 0;
-      const ceiling = sec[69] ? sec[69].length : 0xFFFFFFFF;
+      const ceiling = sec.stringLiteralData ? sec.stringLiteralData.length : 0xFFFFFFFF;
       let good = 0;
       for (let i = 1; i < n; i++) {
         const prev = bytes.readUInt32LE((i - 1) * 4);
@@ -588,8 +765,8 @@ function recoverSeeds(sec, raw, table, pool) {
       }
       return bytes.readUInt32LE(0) === 0 ? good / (n - 1) : 0;
     },
-    69: (bytes) => {
-      const rows = sec[48];
+    stringLiteralData: (bytes) => {
+      const rows = sec.stringLiteral;
       if (!rows || !rows.length) return 0;
       const n = (rows.length / 4) | 0;
       if (n < 2) return 0;
@@ -615,51 +792,53 @@ function recoverSeeds(sec, raw, table, pool) {
       }
       return total ? ok / total : 0;
     },
-    14: (bytes) => nameScore(bytes, 10),
-    23: (bytes) => nameScore(bytes, 30),
-    34: (bytes) => nameScore(bytes, 20),
-    5: (bytes) => nameScore(bytes, 68, 20),
+    fields: (bytes) => nameScore(bytes, 10),
+    methods: (bytes) => nameScore(bytes, 30),
+    properties: (bytes) => nameScore(bytes, 20),
+    assemblies: (bytes) => nameScore(bytes, 68, 20),
   };
 
-  /* 63 first: the string section is the oracle every name-based section needs. */
-  for (const idx of [63, 14, 23, 34, 48, 69, 5]) {
-    const score = scorers[idx];
-    const current = sec[idx];
+  /* The string section first: it is the oracle every name-based section needs. */
+  for (const role of ['string', 'fields', 'methods', 'properties', 'stringLiteral', 'stringLiteralData', 'assemblies']) {
+    const score = scorers[role];
+    const current = sec[role];
     if (!current || !current.length) continue;
-    if (score(probeOf(idx, current)) >= 0.98) continue;
+    if (score(probeOf(role, current)) >= 0.98) continue;
 
-    const probeRaw = probeOf(idx, raw[idx]);
+    const row = rowOfRole(p, role);
+    const hint = row === null ? null : profileSeeds(p)[row];
+    const probeRaw = probeOf(role, raw[role]);
     let bestSeed = null;
     let bestScore = 0;
     for (const seed of pool) {
-      if (SEEDS[idx] && seed.lo === SEEDS[idx].lo && seed.hi === SEEDS[idx].hi) continue;
+      if (hint && seed.lo === hint.lo && seed.hi === hint.hi) continue;
       const candidate = xorBytes(probeRaw, table, seed.lo, seed.hi);
       const s = score(candidate);
       if (s > bestScore) { bestScore = s; bestSeed = seed; }
     }
-    const previous = SEEDS[idx] ? 'hinted' : 'clear';
+    const previous = hint ? 'hinted' : 'clear';
     if (!bestSeed || bestScore < 0.98) {
       log.push({
-        index: idx, name: ROLE[idx] || null, recovered: false, previous,
+        role, recovered: false, previous,
         best: Number(bestScore.toFixed(3)), tried: pool.length,
         note: 'no constant in libil2cpp.so decrypted this section to content that satisfies its own rule',
       });
       continue;
     }
-    const plain = xorBytes(raw[idx], table, bestSeed.lo, bestSeed.hi);
+    const plain = xorBytes(raw[role], table, bestSeed.lo, bestSeed.hi);
     const full = score(plain);
     if (full < 0.98) {
       log.push({
-        index: idx, name: ROLE[idx] || null, recovered: false, previous,
+        role, recovered: false, previous,
         best: Number(full.toFixed(3)), tried: pool.length,
         note: 'a probe cleared the rule but the whole section did not',
       });
       continue;
     }
-    sec[idx] = plain;
-    if (idx === 63) stringIdx = null;   // every name-based scorer must see the new one
+    sec[role] = plain;
+    if (role === 'string') stringIdx = null;   // every name-based scorer must see the new one
     log.push({
-      index: idx, name: ROLE[idx] || null, recovered: true, previous,
+      role, recovered: true, previous,
       seed: hex64(bestSeed), score: Number(full.toFixed(3)), tried: pool.length,
     });
   }
@@ -678,17 +857,29 @@ function recoverSeeds(sec, raw, table, pool) {
  * and the rule it tested, so a caller can check the claim instead of trusting it.
  */
 function verifySections(sec, ctx) {
-  const desc = (ctx && ctx.desc) || null;
-  const stringBytes = sec[63] || Buffer.alloc(0);
+  const profile = (ctx && ctx.profile) || PROFILES['gilla-v1'];
+  const s = byRole(sec, profile);
+  /* Descriptors are keyed by row in a container and by role once decrypted;
+     resolve both spellings the same way the section map is resolved. */
+  const desc = resolveDesc(ctx && ctx.desc, profile);
+  const stringBytes = s.string || Buffer.alloc(0);
   const strings = buildStringIndex(stringBytes);
   const strLen = stringBytes.length;
   let stringCount = 0;
   for (let i = 0; i < strLen; i++) if (stringBytes[i] === 0) stringCount++;
 
-  const typeCount = sec[118] ? (sec[118].length / 66) | 0 : 0;
-  const paramCount = sec[41] ? (sec[41].length / 10) | 0 : 0;
-  const imageCount = sec[84] ? (sec[84].length / 36) | 0 : 0;
-  const blob = sec[69] || Buffer.alloc(0);
+  const typeCount = s.typeDefinitions ? (s.typeDefinitions.length / 66) | 0 : 0;
+  const paramCount = s.parameters ? (s.parameters.length / 10) | 0 : 0;
+  const fieldCount = s.fields ? (s.fields.length / 10) | 0 : 0;
+  const methodCount = s.methods ? (s.methods.length / 30) | 0 : 0;
+  const imageCount = s.images ? (s.images.length / 36) | 0 : 0;
+  const assemblyCount = s.assemblies ? (s.assemblies.length / 68) | 0 : 0;
+  const containerCount = s.genericContainers ? (s.genericContainers.length / 9) | 0 : 0;
+  const genericParamCount = s.genericParameters ? (s.genericParameters.length / 14) | 0 : 0;
+  const constraintCount = s.genericParameterConstraints ? (s.genericParameterConstraints.length / 2) | 0 : 0;
+  const unresolvedTypeCount = s.unresolvedVirtualCallParameterTypes
+    ? (s.unresolvedVirtualCallParameterTypes.length / 2) | 0 : 0;
+  const blob = s.stringLiteralData || Buffer.alloc(0);
   const blobSize = blob.length;
   const blobIndex = buildFirstBad(blob, true);
 
@@ -703,9 +894,10 @@ function verifySections(sec, ctx) {
   }
 
   const rows = [];
-  const add = (index, name, rule, score, samples, note) => {
+  const notChecked = [];
+  const add = (name, rule, score, samples, note) => {
     rows.push({
-      index, name, rule,
+      index: rowOfRole(profile, name), name, rule,
       score: Number(score.toFixed(3)),
       samples,
       verified: samples > 0 && score >= 0.98,
@@ -716,27 +908,27 @@ function verifySections(sec, ctx) {
   /* string table: every NUL-terminated run, not a sample of them */
   {
     const { runs, ok } = strings.census();
-    add(63, 'string', 'printable UTF-8 identifiers', runs ? ok / runs : 0, runs,
+    add('string', 'printable UTF-8 identifiers', runs ? ok / runs : 0, runs,
       `${runs.toLocaleString('en-US')} runs, ${stringCount.toLocaleString('en-US')} NUL terminators`);
   }
 
-  const literal = analyseLiterals(sec, desc, blob, runClean);
+  const literal = analyseLiterals(s, desc, blob, runClean);
 
   /* Only the reading that was accepted is reported as a verified section; the
      rejected hypothesis is not a broken section, so it does not appear as one.
      When neither reading passes, every reading is reported, so the failure is
      visible. */
   if (literal.layout === 'stock') {
-    add(48, 'stringLiteral', 'each row is {length, dataIndex} and the run at dataIndex is clean UTF-8',
+    add('stringLiteral', 'each row is {length, dataIndex} and the run at dataIndex is clean UTF-8',
       literal.score, literal.rows,
       `${literal.rows.toLocaleString('en-US')} rows of ${literal.stride} bytes, ${blobSize.toLocaleString('en-US')} blob bytes`);
   } else if (literal.layout === 'offsets') {
-    add(69, 'stringLiteralData', 'offsets tile the blob and every run is clean UTF-8',
+    add('stringLiteralData', 'offsets tile the blob and every run is clean UTF-8',
       literal.score, literal.sampled,
       `${literal.rows.toLocaleString('en-US')} offsets of ${literal.stride} bytes, ${blobSize.toLocaleString('en-US')} blob bytes`);
   } else if (literal.candidates.length) {
     for (const c of literal.candidates) {
-      add(c.layout === 'stock' ? 48 : 69, c.layout === 'stock' ? 'stringLiteral' : 'stringLiteralData',
+      add(c.layout === 'stock' ? 'stringLiteral' : 'stringLiteralData',
         c.layout === 'stock'
           ? 'each row is {length, dataIndex} and the run at dataIndex is clean UTF-8'
           : 'offsets tile the blob and every run is clean UTF-8',
@@ -744,18 +936,35 @@ function verifySections(sec, ctx) {
     }
   }
 
+  /* typeDefinitions: the name offset must resolve and every index must be in
+     range. A type record is the root every other table is read against, so it is
+     checked before the tables that point into it. */
+  {
+    const t = s.typeDefinitions;
+    const n = t ? (t.length / 66) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) {
+      const o = i * 66;
+      const byval = t.readUInt16LE(o + 8);
+      const name = t.readUInt32LE(o);
+      if (resolves(name) && (byval === 0xFFFF || byval < 0x10000)) ok++;
+    }
+    add('typeDefinitions', 'name offset resolves and the by-value type index is a u16 index', n ? ok / n : 0, n,
+      `${n.toLocaleString('en-US')} rows`);
+  }
+
   /* fields: the name offset must resolve and the type index must not be negative */
   {
-    const t = sec[14];
+    const t = s.fields;
     const n = t ? (t.length / 10) | 0 : 0;
     let ok = 0;
     for (let i = 0; i < n; i++) if (resolves(t.readUInt32LE(i * 10))) ok++;
-    add(14, 'fields', 'name offset resolves to a printable NUL-terminated string', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
+    add('fields', 'name offset resolves to a printable NUL-terminated string', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
   }
 
   /* methods: name, declaring type and parameter window */
   {
-    const t = sec[23];
+    const t = s.methods;
     const n = t ? (t.length / 30) | 0 : 0;
     let ok = 0;
     for (let i = 0; i < n; i++) {
@@ -769,21 +978,34 @@ function verifySections(sec, ctx) {
       const windowOk = pcount === 0 || (pstart !== 0xFFFFFFFF && pstart + pcount <= paramCount);
       if (resolves(name) && decl < typeCount && windowOk) ok++;
     }
-    add(23, 'methods', 'name resolves, declaring type and parameter window are in range', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
+    add('methods', 'name resolves, declaring type and parameter window are in range', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
   }
 
   /* properties */
   {
-    const t = sec[34];
+    const t = s.properties;
     const n = t ? (t.length / 20) | 0 : 0;
     let ok = 0;
     for (let i = 0; i < n; i++) if (resolves(t.readUInt32LE(i * 20))) ok++;
-    add(34, 'properties', 'name offset resolves', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
+    add('properties', 'name offset resolves', n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
+  }
+
+  /* parameters: name resolves and the type index is inside the type table */
+  {
+    const t = s.parameters;
+    const n = t ? (t.length / 10) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) {
+      const o = i * 10;
+      if (resolves(t.readUInt32LE(o)) && t.readUInt16LE(o + 8) < 0x10000) ok++;
+    }
+    add('parameters', 'name offset resolves and the type index is a u16 index', n ? ok / n : 0, n,
+      `${n.toLocaleString('en-US')} rows`);
   }
 
   /* images */
   {
-    const t = sec[84];
+    const t = s.images;
     const n = t ? (t.length / 36) | 0 : 0;
     let ok = 0;
     for (let i = 0; i < n; i++) {
@@ -793,12 +1015,12 @@ function verifySections(sec, ctx) {
       const count = t.readUInt16LE(o + 10);
       if (resolves(name) && start + count <= typeCount) ok++;
     }
-    add(84, 'images', 'name resolves and the type window tiles the type table', n ? ok / n : 0, n, `${n} rows`);
+    add('images', 'name resolves and the type window tiles the type table', n ? ok / n : 0, n, `${n} rows`);
   }
 
   /* assemblies */
   {
-    const t = sec[5];
+    const t = s.assemblies;
     const n = t ? (t.length / 68) | 0 : 0;
     let ok = 0;
     for (let i = 0; i < n; i++) {
@@ -807,11 +1029,204 @@ function verifySections(sec, ctx) {
       const name = t.readUInt32LE(o + 20);
       if (image < imageCount && resolves(name)) ok++;
     }
-    add(5, 'assemblies', 'image index in range and the name offset resolves', n ? ok / n : 0, n, `${n} rows`);
+    add('assemblies', 'image index in range and the name offset resolves', n ? ok / n : 0, n, `${n} rows`);
+  }
+
+  /* generic containers: every container must own a real type or method and its
+     argument count must account for the whole generic-parameter table */
+  {
+    const t = s.genericContainers;
+    const n = containerCount;
+    let ok = 0, argcSum = 0, badStart = 0;
+    for (let i = 0; i < n; i++) {
+      const o = i * 9;
+      const owner = t.readUInt32LE(o);
+      const argc = t.readUInt16LE(o + 4);
+      const isMethod = t[o + 6];
+      const start = t.readUInt16LE(o + 7);
+      argcSum += argc;
+      if (start + argc > genericParamCount) badStart++;
+      const ownerOk = isMethod ? owner < methodCount : owner < typeCount;
+      if (ownerOk && (isMethod === 0 || isMethod === 1) && start + argc <= genericParamCount) ok++;
+    }
+    const sumOk = argcSum === genericParamCount;
+    add('genericContainers',
+      'owner index is in range, isMethod is a flag, and the argc values sum to the parameter table',
+      n ? (ok / n) * (sumOk ? 1 : 0) : 0, n,
+      `${n.toLocaleString('en-US')} containers, argc sum ${argcSum.toLocaleString('en-US')} of ${genericParamCount.toLocaleString('en-US')} params, ${badStart} windows out of range`);
+  }
+
+  /* generic parameters: the constraint windows must tile the constraint table
+     with no gap and no overlap - each row's start is the running sum of the
+     previous rows' counts */
+  {
+    const t = s.genericParameters;
+    const n = genericParamCount;
+    let cursor = 0, ok = 0;
+    for (let i = 0; i < n; i++) {
+      const o = i * 14;
+      const cstart = t.readUInt16LE(o + 6);
+      const ccount = t.readUInt16LE(o + 8);
+      if (ccount === 0 || cstart === cursor) ok++;
+      cursor += ccount;
+    }
+    const closes = cursor === constraintCount;
+    add('genericParameters',
+      'each constraint window starts where the previous one ended and the last one ends at the constraint table',
+      n ? (ok / n) * (closes ? 1 : 0) : 0, n,
+      `${n.toLocaleString('en-US')} params, cursor ends at ${cursor.toLocaleString('en-US')} of ${constraintCount.toLocaleString('en-US')} constraints`);
+  }
+
+  /* generic parameter constraints: every entry is a type index */
+  {
+    const t = s.genericParameterConstraints;
+    const n = constraintCount;
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (t.readUInt16LE(i * 2) < 0x10000) ok++;
+    add('genericParameterConstraints', 'every constraint is a u16 type index', n ? ok / n : 0, n,
+      `${n.toLocaleString('en-US')} entries`);
+  }
+
+  /* the index-only tables: every value must land inside the table it names */
+  const indexTable = (name, stride, limit, label) => {
+    const t = s[name];
+    const n = t ? (t.length / stride) | 0 : 0;
+    if (!n) return;
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (t.readUInt16LE(i * stride) < limit) ok++;
+    add(name, `every ${label} is inside the table it names`, n ? ok / n : 0, n, `${n.toLocaleString('en-US')} rows`);
+  };
+  indexTable('nestedTypes', 4, typeCount, 'nested type index');
+  indexTable('referencedAssemblies', 4, assemblyCount, 'assembly index');
+  indexTable('fieldRefs', 4, typeCount, 'declaring type index');
+
+  /* unresolvedVirtualCallParameterTypes: a type index per row, but the
+     container stores il2cpp type indices, so the range test is reported, not
+     scored - the same reason interfaces is reported below. */
+  if (s.unresolvedVirtualCallParameterTypes && s.unresolvedVirtualCallParameterTypes.length) {
+    const t = s.unresolvedVirtualCallParameterTypes;
+    const n = (t.length / 2) | 0;
+    let max = 0, inRange = 0;
+    for (let i = 0; i < n; i++) {
+      const v = t.readUInt16LE(i * 2);
+      if (v > max) max = v;
+      if (v < typeCount) inRange++;
+    }
+    if (inRange !== n) {
+      notChecked.push({
+        name: 'unresolvedVirtualCallParameterTypes',
+        reason: `values are il2cpp type indices (max ${max.toLocaleString('en-US')} against `
+          + `${typeCount.toLocaleString('en-US')} type definitions), not type-definition indices; `
+          + 'the section is parsed and then not emitted, because no stock-format mapping is proven.',
+      });
+    }
+  }
+
+  /* unresolvedVirtualCallParameterRanges: {start, count} into the type table */
+  {
+    const t = s.unresolvedVirtualCallParameterRanges;
+    const n = t ? (t.length / 8) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) {
+      const start = t.readUInt32LE(i * 8);
+      const count = t.readUInt32LE(i * 8 + 4);
+      if (start + count <= unresolvedTypeCount) ok++;
+    }
+    if (n) add('unresolvedVirtualCallParameterRanges', 'every range lands inside the parameter type table', ok / n, n,
+      `${n.toLocaleString('en-US')} rows`);
+  }
+
+  /* the two default-value tables point into the field and parameter tables */
+  {
+    const t = s.fieldDefaultValues;
+    const n = t ? (t.length / 10) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (t.readUInt32LE(i * 10) < fieldCount) ok++;
+    if (n) add('fieldDefaultValues', 'every field index is inside the field table', ok / n, n,
+      `${n.toLocaleString('en-US')} rows`);
+  }
+  {
+    const t = s.parameterDefaultValues;
+    const n = t ? (t.length / 10) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (t.readUInt32LE(i * 10) < paramCount) ok++;
+    if (n) add('parameterDefaultValues', 'every parameter index is inside the parameter table', ok / n, n,
+      `${n.toLocaleString('en-US')} rows`);
+  }
+  {
+    const t = s.fieldMarshaledSizes;
+    const n = t ? (t.length / 10) | 0 : 0;
+    let ok = 0;
+    for (let i = 0; i < n; i++) if (t.readUInt32LE(i * 10) < fieldCount) ok++;
+    if (n) add('fieldMarshaledSizes', 'every field index is inside the field table', ok / n, n,
+      `${n.toLocaleString('en-US')} rows`);
+  }
+
+  /* Sections that are carried through but whose meaning is not the stock one.
+     They are named with the measurement that shows it, so the run log can say
+     "widened, not proven" instead of "verified" or "missing". */
+  if (s.interfaces && s.interfaces.length) {
+    const t = s.interfaces;
+    const n = (t.length / 2) | 0;
+    let max = 0, inRange = 0;
+    for (let i = 0; i < n; i++) {
+      const v = t.readUInt16LE(i * 2);
+      if (v > max) max = v;
+      if (v < typeCount) inRange++;
+    }
+    if (inRange !== n) {
+      notChecked.push({
+        name: 'interfaces',
+        reason: `the container stores il2cpp type indices here (max ${max.toLocaleString('en-US')} against `
+          + `${typeCount.toLocaleString('en-US')} type definitions), not the type-definition indices a stock `
+          + `v31 file carries; ${(n - inRange).toLocaleString('en-US')} of ${n.toLocaleString('en-US')} values are `
+          + 'outside the type table. The values are widened verbatim and the dumper accepts them.',
+      });
+    }
+  }
+  if (s.interfaceOffsets && s.interfaceOffsets.length) {
+    const t = s.interfaceOffsets;
+    const n = (t.length / 6) | 0;
+    let max = 0, inRange = 0;
+    for (let i = 0; i < n; i++) {
+      const v = t.readUInt16LE(i * 6);
+      if (v > max) max = v;
+      if (v < typeCount) inRange++;
+    }
+    if (inRange !== n) {
+      notChecked.push({
+        name: 'interfaceOffsets',
+        reason: `the type-index half carries il2cpp type indices (max ${max.toLocaleString('en-US')}), not `
+          + 'type-definition indices; widened verbatim, accepted by the dumper, not proven to mean what the stock field means.',
+      });
+    }
+  }
+  if (s.vtableMethods && s.vtableMethods.length) {
+    const t = s.vtableMethods;
+    const n = (t.length / 4) | 0;
+    let odd = 0;
+    for (let i = 0; i < n; i++) {
+      const v = t.readUInt32LE(i * 4);
+      if (v & 1) odd++;
+    }
+    notChecked.push({
+      name: 'vtableMethods',
+      reason: `every entry has bit 0 set (${odd.toLocaleString('en-US')} of ${n.toLocaleString('en-US')}) and the `
+        + 'tag is not the stock layout, so no rule here can say which method an entry names; the values are '
+        + 'carried through and the dumper reads them without failing.',
+    });
+  }
+  if (s.attributeDataRange && s.attributeDataRange.length) {
+    notChecked.push({
+      name: 'attributeDataRange',
+      reason: 'the attribute stream is dropped on output, so there is no blob to check the ranges against; the '
+        + 'values also carry high bits (up to 0x20000001) that a stock offset does not.',
+    });
   }
 
   return {
     sections: rows,
+    notChecked,
     stringCount,
     typeCount,
     literal,
@@ -830,7 +1245,7 @@ function verifySections(sec, ctx) {
  * that killed it. Every hypothesis is scored on every row before one is chosen.
  */
 function analyseLiterals(sec, desc, blob, runClean) {
-  const t = sec[48];
+  const t = sec.stringLiteral;
   const out = {
     layout: null,
     stride: null,
@@ -849,7 +1264,7 @@ function analyseLiterals(sec, desc, blob, runClean) {
   }
 
   const blobSize = blob.length;
-  const declared = desc && desc[48];
+  const declared = desc && desc.stringLiteral;
   let stride = null;
   if (declared && declared.count > 0 && declared.size > 0 && declared.size % declared.count === 0) {
     stride = declared.size / declared.count;
@@ -951,7 +1366,8 @@ function analyseLiterals(sec, desc, blob, runClean) {
 
 /* ------------------------------------------------------------ conversion */
 
-function convert(sec, verification) {
+function convert(sec, verification, profile) {
+  const s = byRole(sec, profile);
   const out = {};
   const recovered = {
     genericContainerIndex: 0,
@@ -961,8 +1377,8 @@ function convert(sec, verification) {
 
   /* -- string literals: measured, then emitted in the layout that was proven -- */
   {
-    const lit = sec[69];
-    const rows = sec[48];
+    const lit = s.stringLiteralData || Buffer.alloc(0);
+    const rows = s.stringLiteral;
     const L = verification.literal || {};
     const layout = L.layout;
     const stride = L.stride || 8;
@@ -993,11 +1409,11 @@ function convert(sec, verification) {
       out.stringLiteralData = Buffer.alloc(0);
     }
   }
-  out.string = sec[63];
+  out.string = s.string || Buffer.alloc(0);
 
   /* -- events: 22 -> 24 ----------------------------------------------------- */
   {
-    const src = sec[97];
+    const src = s.events;
     const n = (src.length / 22) | 0;
     const buf = Buffer.allocUnsafe(n * 24);
     for (let i = 0; i < n; i++) {
@@ -1020,11 +1436,11 @@ function convert(sec, verification) {
   }
 
   /* -- properties: already stock v31 (20 bytes) ----------------------------- */
-  out.properties = sec[34];
+  out.properties = s.properties;
 
   /* -- methods: 30 -> 36 ---------------------------------------------------- */
   {
-    const src = sec[23];
+    const src = s.methods;
     const n = (src.length / 30) | 0;
     const buf = Buffer.allocUnsafe(n * 36);
     for (let i = 0; i < n; i++) {
@@ -1057,8 +1473,8 @@ function convert(sec, verification) {
   }
 
   /* -- default values: 10 -> 12 --------------------------------------------- */
-  for (const [key, idx] of [['parameterDefaultValues', 22], ['fieldDefaultValues', 73]]) {
-    const src = sec[idx];
+  for (const [key, role] of [['parameterDefaultValues', 'parameterDefaultValues'], ['fieldDefaultValues', 'fieldDefaultValues']]) {
+    const src = s[role];
     const n = (src.length / 10) | 0;
     const buf = Buffer.allocUnsafe(n * 12);
     for (let i = 0; i < n; i++) {
@@ -1070,11 +1486,11 @@ function convert(sec, verification) {
     }
     out[key] = buf;
   }
-  out.fieldAndParameterDefaultValueData = sec[46];
+  out.fieldAndParameterDefaultValueData = s.fieldAndParameterDefaultValueData || Buffer.alloc(0);
 
   /* -- fieldMarshaledSizes: 10 -> 12 ---------------------------------------- */
   {
-    const src = sec[36];
+    const src = s.fieldMarshaledSizes;
     const n = (src.length / 10) | 0;
     const buf = Buffer.allocUnsafe(n * 12);
     for (let i = 0; i < n; i++) {
@@ -1089,7 +1505,7 @@ function convert(sec, verification) {
 
   /* -- parameters: 10 -> 12 ------------------------------------------------- */
   {
-    const src = sec[41];
+    const src = s.parameters;
     const n = (src.length / 10) | 0;
     const buf = Buffer.allocUnsafe(n * 12);
     for (let i = 0; i < n; i++) {
@@ -1104,7 +1520,7 @@ function convert(sec, verification) {
 
   /* -- fields: 10 -> 12 ----------------------------------------------------- */
   {
-    const src = sec[14];
+    const src = s.fields;
     const n = (src.length / 10) | 0;
     const buf = Buffer.allocUnsafe(n * 12);
     for (let i = 0; i < n; i++) {
@@ -1120,7 +1536,7 @@ function convert(sec, verification) {
   /* -- generic containers: 9 -> 16 ------------------------------------------ */
   const cont = [];
   {
-    const src = sec[2];
+    const src = s.genericContainers;
     const n = (src.length / 9) | 0;
     const buf = Buffer.allocUnsafe(n * 16);
     for (let i = 0; i < n; i++) {
@@ -1141,7 +1557,7 @@ function convert(sec, verification) {
 
   /* -- generic parameters: 14 -> 16 ----------------------------------------- */
   {
-    const src = sec[32];
+    const src = s.genericParameters;
     const n = (src.length / 14) | 0;
     const buf = Buffer.allocUnsafe(n * 16);
     for (let i = 0; i < n; i++) {
@@ -1166,7 +1582,7 @@ function convert(sec, verification) {
 
   /* -- generic parameter constraints: 2 -> 4 -------------------------------- */
   {
-    const src = sec[3];
+    const src = s.genericParameterConstraints;
     const n = (src.length / 2) | 0;
     const buf = Buffer.allocUnsafe(n * 4);
     for (let i = 0; i < n; i++) buf.writeInt32LE(src.readUInt16LE(i * 2), i * 4);
@@ -1174,12 +1590,12 @@ function convert(sec, verification) {
   }
 
   /* -- nestedTypes / vtableMethods: already u32 ----------------------------- */
-  out.nestedTypes = sec[31];
-  out.vtableMethods = sec[4];
+  out.nestedTypes = s.nestedTypes || Buffer.alloc(0);
+  out.vtableMethods = s.vtableMethods || Buffer.alloc(0);
 
   /* -- interfaces: 2 -> 4 --------------------------------------------------- */
   {
-    const src = sec[59];
+    const src = s.interfaces;
     const n = (src.length / 2) | 0;
     const buf = Buffer.allocUnsafe(n * 4);
     for (let i = 0; i < n; i++) buf.writeInt32LE(src.readUInt16LE(i * 2), i * 4);
@@ -1188,7 +1604,7 @@ function convert(sec, verification) {
 
   /* -- interfaceOffsets: 6 -> 8 --------------------------------------------- */
   {
-    const src = sec[106];
+    const src = s.interfaceOffsets;
     const n = (src.length / 6) | 0;
     const buf = Buffer.allocUnsafe(n * 8);
     for (let i = 0; i < n; i++) {
@@ -1202,7 +1618,7 @@ function convert(sec, verification) {
   /* -- typeDefinitions: 66 -> 88 -------------------------------------------- */
   let typeCount = 0;
   {
-    const src = sec[118];
+    const src = s.typeDefinitions;
     const n = (src.length / 66) | 0;
     typeCount = n;
     const buf = Buffer.allocUnsafe(n * 88);
@@ -1236,7 +1652,7 @@ function convert(sec, verification) {
 
   /* -- images: 36 -> 40 ----------------------------------------------------- */
   {
-    const src = sec[84];
+    const src = s.images;
     const n = (src.length / 36) | 0;
     const buf = Buffer.allocUnsafe(n * 40);
     for (let i = 0; i < n; i++) {
@@ -1261,7 +1677,7 @@ function convert(sec, verification) {
 
   /* -- assemblies: 68 -> 64 ------------------------------------------------- */
   {
-    const src = sec[5];
+    const src = s.assemblies;
     const n = (src.length / 68) | 0;
     const buf = Buffer.allocUnsafe(n * 64);
     for (let i = 0; i < n; i++) {
@@ -1304,7 +1720,7 @@ function convert(sec, verification) {
 
   /* -- fieldRefs: 4 -> 8 ---------------------------------------------------- */
   {
-    const src = sec[67];
+    const src = s.fieldRefs || Buffer.alloc(0);
     const n = (src.length / 4) | 0;
     const buf = Buffer.allocUnsafe(n * 8);
     for (let i = 0; i < n; i++) {
@@ -1400,6 +1816,55 @@ function isStockMetadata(meta) {
 }
 
 /**
+ * Pick the build profile whose descriptor table actually decrypts.
+ *
+ * The profiles differ in header width, field order and row count, so the same
+ * S-box and seed score very differently against each: a v1 header read as v2
+ * triples produces counts and sizes that cannot be a section table. The profile
+ * with the highest fraction of plausible rows wins, and the fraction - not the
+ * raw count - is what is compared, because the two profiles do not have the same
+ * number of rows.
+ *
+ * Hints are tried first, without scanning the image: every build so far keeps
+ * its S-box at a stable place, and scanning 100 MB twice to learn what a 256-byte
+ * read already answers is waste. Only when no hint produces a readable table
+ * does the scanner run.
+ */
+function detectProfile(meta, lib) {
+  const pool = seedConstants(lib);
+  const attempts = [];
+  let best = null;
+
+  const consider = (p, located) => {
+    if (!located) {
+      attempts.push({ profile: p.id, score: 0, rows: p.rows, note: 'no table hint matched' });
+      return;
+    }
+    const ratio = located.score / p.rows;
+    attempts.push({
+      profile: p.id, score: located.score, rows: p.rows,
+      ratio: Number(ratio.toFixed(3)), source: located.source,
+    });
+    if (!best || ratio > best.ratio) best = { ...located, profile: p, ratio };
+  };
+
+  for (const p of PROFILE_LIST) consider(p, findSBoxTable(lib, meta, p, { hintsOnly: true }));
+  if (!best || best.score < 8) {
+    for (const p of PROFILE_LIST) consider(p, findSBoxTable(lib, meta, p));
+  }
+  if (!best || !best.seed || best.score < 8) {
+    const err = new Error(
+      'could not identify a container header in global-metadata.dat ' +
+      `(best table score ${best ? best.score : 0}/${best ? best.profile.rows : 0}, need 8). ` +
+      'This build\'s loader materialises its seeds differently; the build profile in ' +
+      'il2cpp-decrypt.js needs re-deriving for it.');
+    err.diagnostics = { attempts, pool: pool.length };
+    throw err;
+  }
+  return { ...best, attempts, pool };
+}
+
+/**
  * Decrypt a container-format global-metadata.dat.
  * @param {Buffer} meta  encrypted global-metadata.dat
  * @param {Buffer} lib   matching libil2cpp.so
@@ -1409,43 +1874,39 @@ function decryptMetadata(meta, lib) {
   const started = Date.now();
   const timings = {};
 
-  /* The constant pool is the expensive part of locating anything, so it is
-     scanned once, timed on its own, and reused by both searches. */
   let mark = Date.now();
+  const detected = detectProfile(meta, lib);
+  const profile = detected.profile;
+  const table = detected.table;
   const pool = seedConstants(lib);
-  timings.seeds = Date.now() - mark;
-
-  mark = Date.now();
-  const located = findSBoxTable(lib, meta);
-  const table = located.table;
-  timings.sbox = Date.now() - mark;
+  timings.detect = Date.now() - mark;
 
   /* The seed that opened the descriptor table was found while the table was
      being chosen; deriving it a second time over the same pool was pure waste. */
-  const seed = located.seed;
-  const score = located.score;
-  const tried = located.pool;
+  const seed = detected.seed;
+  const score = detected.score;
+  const tried = detected.pool;
   if (!seed || score < 8) {
     const err = new Error(
       'could not identify the header seed in libil2cpp.so ' +
-      `(best container-table score ${score}/126, need 8). ` +
-      'This build\'s loader materialises its seeds differently; the section map in ' +
+      `(best container-table score ${score}/${profile.rows}, need 8). ` +
+      'This build\'s loader materialises its seeds differently; the build profile in ' +
       'il2cpp-decrypt.js needs re-deriving for it.');
-    err.diagnostics = located.tried ? { sbox: located.tried, pool: located.pool } : null;
+    err.diagnostics = detected.tried ? { sbox: detected.tried, pool: detected.pool } : null;
     throw err;
   }
 
   mark = Date.now();
-  const { sec, layout, desc, recovery } =
-    decryptSections(meta, table, seed, { pool });
+  const { sec, raw, layout, desc, descByRow, recovery } =
+    decryptSections(meta, table, seed, profile, { pool });
   timings.sections = Date.now() - mark;
 
   mark = Date.now();
-  const verification = verifySections(sec, { desc });
+  const verification = verifySections(sec, { desc, profile });
   timings.verify = Date.now() - mark;
 
   mark = Date.now();
-  const { out, recovered } = convert(sec, verification);
+  const { out, recovered } = convert(sec, verification, profile);
   timings.convert = Date.now() - mark;
 
   mark = Date.now();
@@ -1479,17 +1940,26 @@ function decryptMetadata(meta, lib) {
   }
 
   const recoveredSeeds = new Map();
-  for (const r of recovery) if (r.recovered) recoveredSeeds.set(r.index, r.seed);
+  for (const r of recovery) if (r.recovered) recoveredSeeds.set(r.role, r.seed);
 
-  const sections = ORDER.map((idx) => {
-    const v = verification.sections.find(s => s.index === idx);
+  const hintSeeds = profileSeeds(profile);
+  const sections = profile.order.map((idx) => {
+    const role = profile.role[idx] || null;
+    const v = role ? verification.sections.find(s => s.name === role) : null;
+    const row = descByRow[idx];
     return {
       index: idx,
-      name: ROLE[idx] || null,
-      bytes: layout[idx].size,
-      enciphered: !!SEEDS[idx],
-      seed: recoveredSeeds.get(idx) || (SEEDS[idx] ? hex64(SEEDS[idx]) : null),
-      seedSource: recoveredSeeds.has(idx) ? 'recovered' : (SEEDS[idx] ? 'known' : 'clear'),
+      name: role,
+      bytes: row ? row.size : 0,
+      offset: role && layout[role] ? layout[role].offset : null,
+      dropped: !role,
+      enciphered: !!hintSeeds[idx],
+      seed: role && recoveredSeeds.get(role)
+        ? recoveredSeeds.get(role)
+        : (hintSeeds[idx] ? hex64(hintSeeds[idx]) : null),
+      seedSource: role
+        ? (recoveredSeeds.has(role) ? 'recovered' : (hintSeeds[idx] ? 'known' : 'clear'))
+        : 'dropped',
       verified: v ? v.verified : null,
       score: v ? v.score : null,
       samples: v ? v.samples : null,
@@ -1498,22 +1968,61 @@ function decryptMetadata(meta, lib) {
     };
   });
 
+  /* Sections a stock v31 file has that this build does not carry at all. They
+     are listed, not silently left empty: a consumer that reads them needs to
+     know the difference between "absent" and "failed to decode". A section the
+     container does carry but no emitter consumes is listed apart, below, so
+     "parsed, not emitted" never reads as "missing". */
+  const carried = new Set(profile.order.map(idx => profile.role[idx]).filter(Boolean));
+  const absent = STOCK_ORDER.filter(name => !out[name] || !out[name].length)
+    .filter(name => !carried.has(name));
+  const notEmitted = profile.order
+    .map(idx => profile.role[idx])
+    .filter(role => role && (!out[role] || !out[role].length));
+  const dropped = profile.order
+    .filter(idx => !profile.role[idx])
+    .map(idx => ({
+      index: idx,
+      bytes: descByRow[idx].size,
+      note: 'carries data that matches no stock v31 section; not emitted',
+    }));
+
   return {
     data: blob,
     report: {
+      profile: {
+        id: profile.id,
+        label: profile.label,
+        headerSize: profile.headerSize,
+        rows: profile.rows,
+        fields: profile.fields,
+        positions: profile.positions,
+        candidates: detected.attempts,
+      },
       headerSeed: hex64(seed),
       headerScore: score,
+      headerRows: profile.rows,
       headerCandidatesTried: tried,
-      sbox: { va: '0x' + located.va.toString(16), source: located.source, score: located.score, candidates: located.tried.length },
+      sbox: {
+        va: detected.va === null || detected.va === undefined ? null : '0x' + detected.va.toString(16),
+        fileOffset: detected.fileOffset === undefined ? null : detected.fileOffset,
+        source: detected.source,
+        score: detected.score,
+        candidates: detected.tried.length,
+      },
       inputSize: meta.length,
       outputSize: blob.length,
       timings,
       counts,
       placed,
       recovered,
+      dropped,
+      notEmitted,
+      absent,
       seedRecovery: recovery,
       verification: {
         sections,
+        notChecked: verification.notChecked,
         stringCount: verification.stringCount,
         typeCount: verification.typeCount,
         literalVerified: !!verification.literal.layout,
@@ -1540,7 +2049,12 @@ module.exports = {
   verifySections,
   convert,
   assemble,
+  detectProfile,
+  byRole,
+  rowOfRole,
+  xorBytes,
+  PROFILES,
+  PROFILE_LIST,
   ORDER,
   ROLE,
-  SEED_HEX,
 };

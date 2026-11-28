@@ -337,6 +337,40 @@ function encodeContainer(stock) {
   const reload = await loadIndex(dumpPath, { cacheDir });
   check('second load comes from cache', reload.cached === true);
 
+  /* The listing writes a generic type's arguments with spaces and a nested type's
+     full path on the declaration line. A name pattern that stops at whitespace
+     drops every multi-parameter generic silently, and the type then shows up as
+     "missing from dump.cs" when it is sitting right there. */
+  {
+    const synthetic = [
+      '// Image 0: Assembly-CSharp.dll - 0',
+      '',
+      '// Namespace: Mono',
+      'internal struct ValueTuple<T1, T2> // TypeDefIndex: 0',
+      '{',
+      '}',
+      '',
+      '// Namespace: ',
+      'public sealed class Outer.Inner<T> // TypeDefIndex: 1',
+      '{',
+      '}',
+      '',
+      '// Namespace: ',
+      'private sealed class <>f__AnonymousType1<<url>j__TPar> // TypeDefIndex: 2',
+      '{',
+      '}',
+      '',
+    ].join('\n');
+    const p = path.join(cacheDir, 'synthetic-dump.cs');
+    fs.writeFileSync(p, synthetic);
+    const syn = await loadIndex(p, { cacheDir });
+    check('generic type names with spaces are parsed', syn.index.types.length === 3,
+      syn.index.types.map(t => t.name).join(' | '));
+    check('a nested type keeps its full declaration name',
+      syn.index.types[1] && syn.index.types[1].name === 'Outer.Inner<T>',
+      syn.index.types[1] && syn.index.types[1].name);
+  }
+
   /* --------------------------------------------------------------- crosscheck */
   section('cross-check: metadata vs dump.cs');
   const binary = openBinary(fs.readFileSync(libPath));
@@ -346,6 +380,22 @@ function encodeContainer(stock) {
     `${typeTable.count} entries, ${typeTable.validated} sampled`);
 
   const cc = crossCheck(repaired.data, index, { binary, typesCount: typeTable.count });
+
+  /* dump.cs and metadata spell a generic type differently. The two artefacts must
+     compare the name, not the spelling, or every generic type is a false mismatch. */
+  {
+    const { sameTypeName } = require('../src/main/il2cpp-crosscheck');
+    const same = [
+      ['ValueTuple<T1, T2>', 'ValueTuple`2'],
+      ['<>c__DisplayClass23_0<T>', '<>c__DisplayClass23_0`1'],
+      ['<>f__AnonymousType1<<url>j__TPar>', '<>f__AnonymousType1`1'],
+      ['FromAsyncTrimPromise<TResult, TInstance>', 'FromAsyncTrimPromise`1'],
+    ];
+    check('generic type names compare on their base name',
+      same.every(([d, m]) => sameTypeName(d, m)) && !sameTypeName('Foo<T>', 'Bar`1'),
+      same.map(([d, m]) => `${d} ~ ${m}`).join('; '));
+  }
+
   check('all metadata types present in dump', cc.summary.typesMissingFromDump === 0, String(cc.summary.typesMissingFromDump));
   check('no duplicate typeDefIndex', cc.summary.duplicateTypeDefIndexes === 0, String(cc.summary.duplicateTypeDefIndexes));
   check('no name mismatches', cc.summary.nameMismatches === 0, String(cc.summary.nameMismatches));
@@ -575,7 +625,151 @@ function encodeContainer(stock) {
   }
 
 
+  /* ------------------------------------------- second container format (v2)
+     The 2026 build changed the container, not the metadata: a narrower header,
+     the descriptor triple reversed, per-row biased packing instead of a chain,
+     and a different set of enciphered rows. The profile is data, so the test
+     builds that container out of the stock sections and asks the reader to give
+     the stock sections back. */
+  section('second container format');
+  const { PROFILES, xorBytes, decryptSections } = require('../src/main/il2cpp-decrypt');
+  const V2 = PROFILES['gilla-v2'];
+  const V1 = PROFILES['gilla-v1'];
+
+  check('v2 gives every packed row a role or an explicit drop',
+    V2.order.every(r => Object.prototype.hasOwnProperty.call(V2.role, r)),
+    V2.order.filter(r => !Object.prototype.hasOwnProperty.call(V2.role, r)).join(','));
+  check('v2 carries a bias for every packed row',
+    V2.order.every(r => Number.isInteger(V2.bias[r])),
+    V2.order.filter(r => !Number.isInteger(V2.bias[r])).join(','));
+  check('v2 packs exactly the rows it maps', V2.order.length === 29 && Object.keys(V2.role).length === 29,
+    `${V2.order.length} rows, ${Object.keys(V2.role).length} roles`);
+  check('v2 header is 122 triples of {size, count, offset}',
+    V2.rows === 122 && V2.fields.join(',') === 'size,count,offset',
+    `${V2.rows} rows of ${V2.fields.join(',')}`);
+
+  {
+    /* Container row stride per stock section, for the descriptor's count. */
+    const STRIDE = {
+      stringLiteral: 4, stringLiteralData: 1, string: 1, events: 22, properties: 20,
+      methods: 30, parameterDefaultValues: 10, fieldDefaultValues: 10,
+      fieldAndParameterDefaultValueData: 1, fieldMarshaledSizes: 10, parameters: 10,
+      fields: 10, genericParameters: 14, genericParameterConstraints: 2,
+      genericContainers: 9, nestedTypes: 4, interfaces: 2, vtableMethods: 4,
+      interfaceOffsets: 6, typeDefinitions: 66, images: 36, assemblies: 68,
+      referencedAssemblies: 4, attributeData: 1, attributeDataRange: 8,
+      unresolvedVirtualCallParameterTypes: 2, unresolvedVirtualCallParameterRanges: 8,
+      fieldRefs: 4,
+    };
+    const TABLE = Buffer.alloc(256);
+    for (let i = 0; i < 256; i++) TABLE[i] = (i * 7 + 13) & 0xFF;      // a permutation
+    const HEADER_SEED = { lo: 0x2c481603, hi: 0x321a13eb };
+
+    /* Reference rows carry the container layout already; re-key them by role,
+       then by the v2 row that carries that role. */
+    const byRoleBuf = {};
+    for (const [row, buf] of Object.entries(container)) {
+      const role = V1.role[Number(row)];
+      if (role) byRoleBuf[role] = buf;
+    }
+    /* Fill the sections the reference container dropped with the stock bytes, so
+       every v2 row has something to carry. */
+    {
+      const H = readHeader(roundTripSource);
+      for (const name of ['referencedAssemblies', 'attributeData', 'attributeDataRange',
+        'unresolvedVirtualCallParameterTypes', 'unresolvedVirtualCallParameterRanges']) {
+        if (byRoleBuf[name]) continue;
+        const s = H.sections.find(x => x.name === name);
+        byRoleBuf[name] = s && s.size ? roundTripSource.subarray(s.offset, s.offset + s.size) : Buffer.alloc(0);
+      }
+    }
+
+    /* Physical placement: 4-byte aligned packing. genericParameters is 75,978
+       bytes, so the next section starts 2 bytes past it - the same gap that put
+       the real constraint table one slot early. */
+    let pos = 0x800;
+    const posByRow = {};
+    const bodyOf = (row) => {
+      const role = V2.role[row];
+      return role ? byRoleBuf[role] : Buffer.alloc(16);   // the dropped row still occupies space
+    };
+    for (const row of V2.order) {
+      posByRow[row] = pos;
+      pos += bodyOf(row).length;
+      pos = (pos + 3) & ~3;
+    }
+
+    const header = Buffer.alloc(V2.headerSize);
+    const v2 = Buffer.alloc(pos);
+    const seeded = new Set(Object.keys(V2.seeds).map(Number));
+    for (const row of V2.order) {
+      const role = V2.role[row];
+      const body = bodyOf(row);
+      const size = body.length;
+      const count = role && STRIDE[role] ? Math.max(1, (size / STRIDE[role]) | 0) : 1;
+      /* descriptor offset is chosen so that offset + bias lands on posByRow */
+      const descOffset = posByRow[row] - V2.bias[row];
+      header.writeInt32LE(size, row * 12);
+      header.writeInt32LE(count, row * 12 + 4);
+      header.writeInt32LE(descOffset, row * 12 + 8);
+      const plain = body.length ? body : Buffer.alloc(0);
+      const seed = V2.seeds[row];
+      const bytes = seed
+        ? xorBytes(plain, TABLE, parseInt(seed.slice(8), 16) >>> 0, parseInt(seed.slice(0, 8), 16) >>> 0)
+        : plain;   // splitSeed(): high half first, low half last, as the profile writes it
+      bytes.copy(v2, posByRow[row]);
+    }
+    const headerCipher = xorBytes(header, TABLE, HEADER_SEED.lo, HEADER_SEED.hi);
+    headerCipher.copy(v2, 0);
+
+    const rt2 = decryptSections(v2, TABLE, HEADER_SEED, V2, { recover: false });
+    const wrong = [];
+    for (const row of V2.order) {
+      const role = V2.role[row];
+      if (!role) continue;
+      const got = rt2.sec[role];
+      if (!got || !got.equals(byRoleBuf[role])) wrong.push(role);
+    }
+    check('v2 reader recovers every section byte for byte', wrong.length === 0,
+      wrong.length ? wrong.join(', ') : `${Object.keys(rt2.sec).length} sections`);
+    check('v2 seeded rows are the ones the profile names',
+      Object.keys(rt2.seedSource).filter(r => rt2.seedSource[r] === 'known').length === 7,
+      Object.keys(rt2.seedSource).filter(r => rt2.seedSource[r] === 'known').join(','));
+
+    const ver2 = verifySections(rt2.sec, { desc: rt2.desc, profile: V2 });
+    const scored2 = ver2.sections.filter(s => s.samples > 0);
+    check('v2 sections verify against their own content rules',
+      scored2.length >= 15 && scored2.every(s => s.verified),
+      `${scored2.filter(s => s.verified).length}/${scored2.length}`);
+    check('v2 literal index is read at the stride its descriptor declares',
+      ver2.literal.layout === 'offsets' && ver2.literal.stride === 4,
+      `${ver2.literal.layout}@${ver2.literal.stride}`);
+    check('v2 sections that are not stock-form are reported, not scored',
+      ver2.notChecked.length >= 3,
+      ver2.notChecked.map(n => n.name).join(','));
+
+    const conv2 = convert(rt2.sec, ver2, V2);
+    {
+      const h = readHeader(roundTripSource);
+      const names = ['string', 'events', 'properties', 'methods', 'parameterDefaultValues', 'fieldDefaultValues',
+        'fieldAndParameterDefaultValueData', 'fieldMarshaledSizes', 'parameters', 'fields', 'genericParameters',
+        'genericParameterConstraints', 'genericContainers', 'nestedTypes', 'vtableMethods', 'interfaces',
+        'interfaceOffsets', 'typeDefinitions', 'images', 'assemblies', 'fieldRefs'];
+      const bad = [];
+      for (const name of names) {
+        const s = h.sections.find(x => x.name === name);
+        const want = s && s.size ? roundTripSource.subarray(s.offset, s.offset + s.size) : Buffer.alloc(0);
+        const got = conv2.out[name] || Buffer.alloc(0);
+        if (want.length !== got.length || !want.equals(got)) bad.push(name);
+      }
+      check('v2 conversion inverts the container layout exactly', bad.length === 0,
+        bad.length ? bad.join(', ') : `${names.length} sections byte-identical`);
+    }
+    check('v2 output is a valid v31 file', validateMetadata(assemble(conv2.out).blob).ok === true);
+  }
+
   /* ------------------------------------------------------- dumper (optional) */
+
   if (runDumper) {
     section('Il2CppDumper (repaired metadata)');
     const dumpOut = fs.mkdtempSync(path.join(os.tmpdir(), 'semenu-dump-'));

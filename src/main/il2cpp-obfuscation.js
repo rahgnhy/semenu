@@ -137,10 +137,27 @@ function entropy(name) {
   return h;
 }
 
-/** Leaf name without its generic arity suffix. */
+/** Leaf name without its generic argument list or backtick arity.
+ *
+ *  dump.cs writes a generic type's parameters inline ("ValueTuple<T1, T2>"), and
+ *  the argument list can itself contain '<' for anonymous types
+ *  ("<>f__AnonymousType1<<url>j__TPar>"). The trailing balanced list is syntax,
+ *  not name: leaving it in makes every multi-parameter generic look like an
+ *  illegal identifier to the shape scorer. */
 function leafOf(name) {
-  const leaf = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
-  return leaf.replace(/`\d+$/, '');
+  let leaf = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : name;
+  leaf = leaf.replace(/`\d+$/, '');
+  if (leaf.endsWith('>')) {
+    let depth = 0;
+    for (let i = leaf.length - 1; i >= 0; i--) {
+      if (leaf[i] === '>') depth++;
+      else if (leaf[i] === '<') {
+        depth--;
+        if (depth === 0) { if (i > 0) leaf = leaf.slice(0, i); break; }
+      }
+    }
+  }
+  return leaf;
 }
 
 /**
@@ -220,10 +237,25 @@ function isGameType(owner, i) {
   return !FRAMEWORK_ASSEMBLY.test(name);
 }
 
-/** Generic arity of a leaf name (`Dictionary\`2` -> 2), 0 when absent. */
+/** Generic arity: backtick form in metadata ("Dictionary`2"), inline list in
+ *  dump.cs ("Dictionary<TKey, TValue>"). */
 function arityOf(name) {
   const m = /`(\d+)$/.exec(name);
-  return m ? Number(m[1]) : 0;
+  if (m) return Number(m[1]);
+  if (!name.endsWith('>')) return 0;
+  let depth = 0;
+  for (let i = name.length - 1; i >= 0; i--) {
+    if (name[i] === '>') depth++;
+    else if (name[i] === '<') {
+      depth--;
+      if (depth === 0) {
+        if (i === 0) return 0;               // "<Module>" is a name, not a list
+        const args = name.slice(i + 1, -1).trim();
+        return args ? args.split(',').length : 0;
+      }
+    }
+  }
+  return 0;
 }
 
 /**

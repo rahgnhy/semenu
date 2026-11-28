@@ -1007,9 +1007,12 @@
     }
     body.appendChild(kvGrid([
       ['mode', 'container'],
+      ['profile', d.profile ? d.profile.id : '?'],
       ['header seed', d.headerSeed],
-      ['descriptor score', `${d.headerScore} / 126`],
-      ['S-box', `${d.sbox ? d.sbox.va : '?'} (${d.sbox ? d.sbox.source : '?'})`],
+      ['descriptor score', `${d.headerScore} / ${d.headerRows || 126}`],
+      ['S-box', d.sbox
+        ? `${d.sbox.va || (d.sbox.fileOffset != null ? 'file 0x' + d.sbox.fileOffset.toString(16) : '?')} (${d.sbox.source})`
+        : '?'],
       ['size', `${fmtSize(d.inputSize)} → ${fmtSize(d.outputSize)}`],
       ['validation', d.validation ? (d.validation.ok ? 'valid on arrival' : `${d.validation.issues.length} issue(s) left`) : 'not checked'],
     ]));
@@ -1036,6 +1039,24 @@
         .filter(s => s.verified != null)
         .map(s => [s.name || `e${s.index}`, fmtSize(s.bytes), s.seed ? s.seed.slice(0, 12) + '…' : 'clear', `${Math.round((s.score || 0) * 100)}%`, s.verified ? 'verified' : 'UNVERIFIED']);
       if (rows.length) body.appendChild(dataTable(['section', 'bytes', 'seed', 'score', 'state'], rows));
+
+      const unchecked = v.notChecked || [];
+      if (unchecked.length) {
+        body.appendChild(h('div', { class: 'icd-sub-title', text: 'Carried through, not proven' }));
+        body.appendChild(dataTable(['section', 'why'], unchecked.map(u => [u.name, u.reason])));
+      }
+    }
+    if ((d.notEmitted || []).length) {
+      body.appendChild(h('div', { class: 'icd-inline-note warn',
+        text: `Parsed but not emitted: ${d.notEmitted.join(', ')}. The container carries them; no stock-format mapping is proven, so they are left out rather than guessed.` }));
+    }
+    if ((d.dropped || []).length) {
+      body.appendChild(h('div', { class: 'icd-inline-note',
+        text: `Dropped rows: ${d.dropped.map(x => `e${x.index} (${fmtSize(x.bytes)})`).join(', ')} - data that matches no stock v31 section.` }));
+    }
+    if ((d.absent || []).length) {
+      body.appendChild(h('div', { class: 'icd-inline-note',
+        text: `Not present in this build: ${d.absent.join(', ')}.` }));
     }
     if (d.validation && !d.validation.ok) {
       body.appendChild(dataTable(['severity', 'code', 'detail'],

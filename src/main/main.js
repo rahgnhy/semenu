@@ -23,6 +23,7 @@ const { extractIl2CppPayloads } = require('./il2cpp-extract');
 const { decryptMetadata, isStockMetadata, IL2CPP_MAGIC } = require('./il2cpp-decrypt');
 const { validateMetadata, repairMetadata } = require('./il2cpp-metadata');
 const { createQuery, summarise } = require('./il2cpp-query');
+const { analyse: analyseDump, writeReports } = require('./il2cpp-report');
 
 const DEV = process.argv.includes('--dev');
 const SELFTEST = process.argv.includes('--selftest');
@@ -648,9 +649,16 @@ function registerIpc() {
     const decryptedByUs = path.resolve(decMetaPath) !== path.resolve(metaPath);
     const metaBefore = validateMetadata(fs.readFileSync(decMetaPath));
     let repairReport = null;
-    if (!metaBefore.ok) {
+    /* Repair is attempted even when the file validates. The validator checks each
+       table's own ranges; it cannot see a cross-table defect like the fieldRefs
+       rows that resolve to no field because their owning type stores
+       fieldStart = -1. That defect leaves every row in range, so `ok` is true and
+       a gate on `!ok` would hand Il2CppDumper a file that dies in struct
+       generation. repairMetadata() is idempotent and returns an empty list when
+       there is nothing to do. */
+    {
       const repaired = repairMetadata(fs.readFileSync(decMetaPath));
-      if (repaired.data) {
+      if (repaired.data && (repaired.repairs.length || !metaBefore.ok)) {
         metaToUse = decryptedByUs ? decMetaPath : path.join(outDir, 'global-metadata.repaired.dat');
         fs.writeFileSync(metaToUse, repaired.data);
         repairReport = {
@@ -703,6 +711,7 @@ function registerIpc() {
         registrationVa,
         cacheDir: il2cppCacheDir(),
         preRepair: repairReport ? { before: metaBefore, repair: repairReport } : undefined,
+        decrypt: decryptReport,
       });
       const written = writeReports(report, outDir, { index, roleMap });
       analysis = { ...summarise(report), files: written.files };

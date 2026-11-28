@@ -23,9 +23,12 @@ const TYPE_NAMES = {
   1: 'VOID', 2: 'BOOLEAN', 3: 'CHAR', 4: 'I1', 5: 'U1', 6: 'I2', 7: 'U2',
   8: 'I4', 9: 'U4', 10: 'I8', 11: 'U8', 12: 'R4', 13: 'R8', 14: 'STRING',
   15: 'PTR', 16: 'BYREF', 17: 'VALUETYPE', 18: 'CLASS', 19: 'VAR', 20: 'ARRAY',
-  21: 'GENERICINST', 22: 'TYPEDBYREF', 23: 'I', 24: 'U', 25: 'FNPTR',
-  26: 'OBJECT', 27: 'SZARRAY', 28: 'MVAR', 29: 'CMOD_REQD', 30: 'CMOD_OPT',
-  31: 'INTERNAL',
+  21: 'GENERICINST', 22: 'TYPEDBYREF',
+  /* 0x17 is not used by Il2CppTypeEnum; the numeric values are not contiguous
+     from here on. 0x1a is unused too. Labelling 30 as CMOD_OPT made every
+     method-level MVAR constraint read as an optional modifier. */
+  24: 'I', 25: 'U', 27: 'FNPTR', 28: 'OBJECT', 29: 'SZARRAY', 30: 'MVAR',
+  31: 'CMOD_REQD', 32: 'CMOD_OPT', 33: 'INTERNAL',
 };
 
 function isElf(buf) {

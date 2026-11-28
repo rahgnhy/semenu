@@ -16,6 +16,34 @@ function sample(list) {
   return list.slice(0, MAX_SAMPLES);
 }
 
+/* The two artefacts spell a generic type differently: metadata stores the
+   backtick arity ("ValueTuple`2"), dump.cs writes the argument list
+   ("ValueTuple<T1, T2>") and appends the outer types' parameters for a nested
+   type. Compare the base name, which both agree on. */
+function sameTypeName(dumpLeaf, metaName) {
+  if (dumpLeaf === metaName) return true;
+  /* Compiler-generated names start with '<' themselves (<>c, <>c__DisplayClass1_0),
+     and an anonymous type's argument list can contain '<' too
+     (<>f__AnonymousType1<<url>j__TPar>). Walk back from the closing bracket to the
+     opener that balances it: that is the type's own argument list. */
+  let dumpBase = dumpLeaf;
+  if (dumpLeaf.endsWith('>')) {
+    let depth = 0;
+    for (let i = dumpLeaf.length - 1; i >= 0; i--) {
+      const c = dumpLeaf[i];
+      if (c === '>') depth++;
+      else if (c === '<') {
+        depth--;
+        if (depth === 0) { if (i > 0) dumpBase = dumpLeaf.slice(0, i); break; }
+      }
+    }
+  }
+  /* dump.cs writes the type-parameter list of the whole nesting chain on the
+     leaf (TaskFactory.FromAsyncTrimPromise<TResult, TInstance> for a one-parameter
+     nested type), so the arity cannot be compared. The base name can. */
+  return dumpBase === metaName.replace(/`\d+$/, '');
+}
+
 /**
  * @param {Buffer} metaBuf validated or unvalidated metadata
  * @param {object} index parsed dump.cs index
@@ -92,7 +120,7 @@ function crossCheck(metaBuf, index, opts) {
     seen.add(i);
     const t = found[0];
     const dumpLeaf = t.name.includes('.') ? t.name.slice(t.name.lastIndexOf('.') + 1) : t.name;
-    if (metaName && dumpLeaf !== metaName) {
+    if (metaName && !sameTypeName(dumpLeaf, metaName)) {
       report.nameMismatches.push({ typeDefIndex: i, metadata: fq, dump: t.name, line: t.lineStart });
     }
     if (t.methodCount !== methodCount && report.methodCountMismatches.length < MAX_SAMPLES * 4) {
@@ -161,4 +189,4 @@ function crossCheck(metaBuf, index, opts) {
   return report;
 }
 
-module.exports = { crossCheck };
+module.exports = { crossCheck, sameTypeName };

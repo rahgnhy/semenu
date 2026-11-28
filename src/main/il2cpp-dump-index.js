@@ -30,8 +30,12 @@ const INDEX_VERSION = `${CACHE_VERSION}:${PARSER_FINGERPRINT}`;
    C# but two words in the listing. Both are accepted as one prefix. */
 const ACCESS = '(?:(?:public|internal|private|protected)(?:\\s+(?:internal|protected))?\\s+)?';
 const MODIFIERS = '(?:(?:sealed|abstract|static|readonly|ref|unsafe|partial)\\s+)*';
+/* A type declaration can carry a fully-qualified name (nested types and types
+   with an empty namespace are written as Outer.Inner), and a generic type's
+   argument list contains spaces ("ValueTuple<T1, T2>"). The name is therefore
+   everything between the keyword and the parent list / TypeDefIndex comment. */
 const RE_TYPE = new RegExp(
-  '^' + ACCESS + MODIFIERS + '(class|struct|enum|interface)\\s+([^\\s:{]+)' +
+  '^' + ACCESS + MODIFIERS + '(class|struct|enum|interface)\\s+(.+?)' +
   '(?:\\s*:\\s*([^/{]+?))?\\s*(?:\\/\\/\\s*TypeDefIndex:\\s*(\\d+))?\\s*$');
 
 /* Interface and abstract methods carry "RVA: -1 Offset: -1" instead of an address. */

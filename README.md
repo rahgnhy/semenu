@@ -71,14 +71,18 @@ For Unity games built with IL2CPP. Point it at an APK, or at an extracted
 `libil2cpp.so` plus `global-metadata.dat`, and it walks the whole chain:
 
 - **Decrypt** — the container's S-box and per-section seeds are derived from the
-  matching `libil2cpp.so`. Every section is verified field by field before
-  anything is written: 84,657 fields, 127,343 methods, 23,319 properties, 102
-  images, 102 assemblies and every string run. When no hypothesis passes, the
-  pair is detached and the scores are reported instead of a guess.
+  matching `libil2cpp.so`. The reader is profile-driven: header layout, row roles,
+  per-row biases and seeds are data, so a different build format decrypts without
+  changing the reader. Every section is verified field by field before anything
+  is written; a section the container carries in a non-stock form is passed
+  through and listed as not proven, never scored as verified. When no hypothesis
+  passes, the pair is detached and the scores are reported instead of a guess.
 - **Repair** — container defects are corrected and logged: `genericContainerIndex`
   restored to its stock slot, `elementTypeIndex` derived per enum from its own
   `value__`, `fieldRefs` retargeted or detached, `stringLiteral` widened from the
-  container's 4-byte offset array to stock `{length, dataIndex}` pairs.
+  container's 4-byte offset array to stock `{length, dataIndex}` pairs. Repair
+  runs even when the file validates, because a cross-table defect can leave every
+  row in range and still stop the dumper.
 - **Dump** — the bundled Il2CppDumper writes `dump.cs`, `il2cpp.h`, `script.json`,
   `stringliteral.json` and `DummyDll`.
 - **Analyse** — the dump is indexed and searched in place, and 23 naming signals

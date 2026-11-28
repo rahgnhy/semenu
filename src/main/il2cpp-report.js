@@ -56,6 +56,7 @@ async function analyse(opts) {
     },
     metadata: null,
     repair: null,
+    decrypt: o.decrypt || null,
     binary: null,
     dump: null,
     crosscheck: null,
@@ -283,6 +284,31 @@ function buildRunLog(report, o) {
   const notRecovered = ((report.repair && report.repair.uncertain) || []).slice();
   const notChecked = (report.metadata.uncertain || []).slice();
 
+  /* A container-encrypted build is decrypted before any of the above runs. The
+     decryption's own limits belong in the same log: a section carried through
+     without a stock meaning is not a section that passed a check. */
+  const d = report.decrypt && report.decrypt.mode === 'container' ? report.decrypt : null;
+  if (d) {
+    const vs = (d.verification && d.verification.sections) || [];
+    steps.push({
+      step: 'decrypt-metadata',
+      ok: true,
+      detail: `profile ${d.profile ? d.profile.id : '?'} (${d.profile ? d.profile.label : 'unknown'}), header seed ${d.headerSeed} scored ${d.headerScore}/${d.headerRows}, ${vs.filter(s => s.verified).length}/${vs.filter(s => s.verified != null).length} sections verified, literal index read as ${d.verification.literalLayout || '?'}@${d.verification.literalStride || '?'}`,
+    });
+    for (const u of ((d.verification && d.verification.notChecked) || [])) {
+      notChecked.push(`${u.name}: ${u.reason}`);
+    }
+    for (const x of (d.dropped || [])) {
+      notRecovered.push(`row e${x.index} (${x.bytes.toLocaleString('en-US')} B) was carried by the container but matches no stock v31 section; it was not emitted.`);
+    }
+    for (const name of (d.notEmitted || [])) {
+      notChecked.push(`${name}: carried by the container, parsed, but no stock v31 emitter consumes it.`);
+    }
+    for (const name of (d.absent || [])) {
+      notChecked.push(`${name}: not present in this build's container.`);
+    }
+  }
+
   return {
     steps,
     changes,
@@ -348,6 +374,28 @@ function toMarkdown(r) {
       push(`| \`${c.code}\` | ${c.entries == null ? '-' : c.entries.toLocaleString('en-US')} | ${String(c.detail).replace(/\|/g, '\\|')} |`);
     }
     push('');
+  }
+
+  const d = r.decrypt && r.decrypt.mode === 'container' ? r.decrypt : null;
+  if (d) {
+    const vs = (d.verification && d.verification.sections) || [];
+    const scored = vs.filter(s => s.verified != null);
+    push('## The container', '');
+    push(`The metadata arrived encrypted. It was read as **${d.profile ? d.profile.id : '?'}** - ${d.profile ? d.profile.label : 'unknown profile'}.`, '');
+    push(`Header seed \`${d.headerSeed}\` scored ${d.headerScore}/${d.headerRows}; S-box ${d.sbox ? (d.sbox.va || 'file 0x' + Number(d.sbox.fileOffset).toString(16)) : '?'} (${d.sbox ? d.sbox.source : '?'}). ${scored.filter(s => s.verified).length} of ${scored.length} sections passed their own content rule. The string-literal index was read as \`${d.verification.literalLayout || '?'}\` at ${d.verification.literalStride || '?'} bytes per row, ${(d.verification.literalRows || 0).toLocaleString('en-US')} rows.`, '');
+    if ((d.dropped || []).length) {
+      push('| row | bytes | why it is not in the output |', '| --- | --- | --- |');
+      for (const x of d.dropped) push(`| e${x.index} | ${x.bytes.toLocaleString('en-US')} | matches no stock v31 section |`);
+      push('');
+    }
+    const unchecked = (d.verification && d.verification.notChecked) || [];
+    if (unchecked.length) {
+      push('Carried through but not proven:', '');
+      for (const u of unchecked) push(`- \`${u.name}\` - ${u.reason}`);
+      push('');
+    }
+    if ((d.notEmitted || []).length) push(`Parsed but not emitted (no stock mapping): ${d.notEmitted.map(n => '`' + n + '`').join(', ')}.`, '');
+    if ((d.absent || []).length) push(`Not present in this build: ${d.absent.map(n => '`' + n + '`').join(', ')}.`, '');
   }
 
   push('## What was not recovered', '');
