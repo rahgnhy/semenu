@@ -1,7 +1,7 @@
 {
   "name": "se-menu",
   "productName": "SE-MENU",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "SE-MENU — a compact liquid-glass utility console for Windows.",
   "main": "src/main/main.js",
   "author": "sside",

@@ -3,7 +3,7 @@
 A compact liquid-glass utility console for Windows. Animated glass background,
 four workspaces, real measurements.
 
-![stack](https://img.shields.io/badge/Electron-33-8b7cf6) ![platform](https://img.shields.io/badge/Windows-11-9ba3af) ![version](https://img.shields.io/badge/version-1.0.4-a78bfa)
+![stack](https://img.shields.io/badge/Electron-33-8b7cf6) ![platform](https://img.shields.io/badge/Windows-11-9ba3af) ![version](https://img.shields.io/badge/version-1.0.5-a78bfa)
 
 ---
 
@@ -33,8 +33,8 @@ npm run dist       # build the installer and portable executable
 
 Pre-built binaries live in `dist/`:
 
-- `semenu-v1.0.4-Setup.exe` — NSIS installer
-- `semenu-v1.0.4.exe` — single-file portable build
+- `semenu-v1.0.5-Setup.exe` - NSIS installer
+- `semenu-v1.0.5.exe` - single-file portable build
 
 ## Background animations
 
