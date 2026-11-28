@@ -639,13 +639,19 @@ function registerIpc() {
     // The repairer never guesses: every change is recorded in `repairs`, and
     // anything it cannot recover is listed in `uncertain` and passed through
     // to the caller untouched.
+    //
+    // One metadata file per run. When we produced the file ourselves (decrypt
+    // output) the repaired bytes are written back over it. When the input was
+    // already stock, that file is the APK extract and is left alone, so the
+    // repair goes to a separate .repaired.dat next to it.
     const decMetaPath = metaToUse;
+    const decryptedByUs = path.resolve(decMetaPath) !== path.resolve(metaPath);
     const metaBefore = validateMetadata(fs.readFileSync(decMetaPath));
     let repairReport = null;
     if (!metaBefore.ok) {
       const repaired = repairMetadata(fs.readFileSync(decMetaPath));
       if (repaired.data) {
-        metaToUse = path.join(outDir, 'global-metadata.repaired.dat');
+        metaToUse = decryptedByUs ? decMetaPath : path.join(outDir, 'global-metadata.repaired.dat');
         fs.writeFileSync(metaToUse, repaired.data);
         repairReport = {
           applied: repaired.repairs,
@@ -691,12 +697,12 @@ function registerIpc() {
     let analysisError = null;
     try {
       const { report, index, roleMap } = await analyseDump({
-        metaPath: decMetaPath,
+        metaPath: metaToUse,
         dumpPath: path.join(outDir, 'dump.cs'),
         libPath,
         registrationVa,
         cacheDir: il2cppCacheDir(),
-        writeRepairedTo: path.join(outDir, 'global-metadata.repaired.dat'),
+        preRepair: repairReport ? { before: metaBefore, repair: repairReport } : undefined,
       });
       const written = writeReports(report, outDir, { index, roleMap });
       analysis = { ...summarise(report), files: written.files };
@@ -711,9 +717,10 @@ function registerIpc() {
         extractDir,
         libPath,
         metaPath,
-        decryptedMetaPath: decMetaPath,
-        repairedMetaPath: fs.existsSync(path.join(outDir, 'global-metadata.repaired.dat'))
-          ? path.join(outDir, 'global-metadata.repaired.dat') : null,
+        metadataPath: metaToUse,
+        decryptedMetaPath: decryptedByUs ? decMetaPath : null,
+        repairedMetaPath: repairReport && !decryptedByUs ? metaToUse : null,
+        repairedInPlace: !!(repairReport && decryptedByUs),
         registrationVa,
         generatedAt: new Date().toISOString(),
       }, null, 2));
@@ -840,6 +847,42 @@ function registerIpc() {
       const dest = path.join(app.getPath('downloads'), name);
       fs.copyFileSync(p, dest);
       return { ok: true, savedTo: dest };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  /* Save-as: the caller picks the destination. Binary outputs (DummyDll, the
+     decrypted metadata) go through the same path, so no base64 round-trip. */
+  handle('il2cpp:saveAs', async (opts) => {
+    const p = opts && opts.path;
+    if (!p || !fs.existsSync(p)) return { ok: false, error: 'file not found' };
+    try {
+      const { dialog } = require('electron');
+      const name = opts.name || path.basename(p);
+      const ext = path.extname(name).replace(/^\./, '');
+      const res = await dialog.showSaveDialog(win, {
+        title: 'Save ' + name,
+        defaultPath: path.join(app.getPath('downloads'), name),
+        filters: ext
+          ? [{ name: ext.toUpperCase() + ' file', extensions: [ext] }, { name: 'All files', extensions: ['*'] }]
+          : [{ name: 'All files', extensions: ['*'] }],
+      });
+      if (res.canceled || !res.filePath) return { ok: false, canceled: true };
+      fs.copyFileSync(p, res.filePath);
+      return { ok: true, savedTo: res.filePath };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  handle('il2cpp:revealFile', (opts) => {
+    const p = opts && opts.path;
+    if (!p || !fs.existsSync(p)) return { ok: false, error: 'file not found' };
+    try {
+      const { shell } = require('electron');
+      shell.showItemInFolder(p);
+      return { ok: true };
     } catch (e) {
       return { ok: false, error: e.message };
     }

@@ -172,19 +172,20 @@ function createQuery(opts) {
 
     const manifest = readJson(path.join(outDir, MANIFEST));
     const metaPath = a.metaPath
-      || (manifest && (manifest.decryptedMetaPath || manifest.metaPath))
+      || (manifest && (manifest.metadataPath || manifest.repairedMetaPath || manifest.decryptedMetaPath || manifest.metaPath))
       || pickMetaForDir(outDir);
     if (!metaPath || !fs.existsSync(metaPath)) return { ok: false, error: 'no metadata file found in ' + outDir };
     const libPath = a.libPath || (manifest && manifest.libPath) || null;
     const registrationVa = a.registrationVa || (manifest && manifest.registrationVa) || registrationVaFromLog(outDir);
 
+    /* No writeRepairedTo: the file the dumper consumed is the file on disk.
+       A re-run analyses it in memory and leaves the folder's file list alone. */
     const { report, index, roleMap } = await analyseDump({
       metaPath,
       dumpPath,
       libPath: libPath && fs.existsSync(libPath) ? libPath : null,
       registrationVa,
       cacheDir: cacheDir(),
-      writeRepairedTo: a.writeRepairedTo || path.join(outDir, 'global-metadata.repaired.dat'),
     });
     const written = writeReports(report, outDir, { index, roleMap });
     return {
@@ -229,7 +230,11 @@ function summarise(report) {
       signals: report.obfuscation.signals,
       flagged: report.obfuscation.suspiciousTypes,
       findings: (report.obfuscation.findings || []).slice(0, 40),
+      renameMap: (report.obfuscation.renameMap || []).slice(0, 40),
+      renameMapTotal: (report.obfuscation.renameMap || []).length,
       roles: report.obfuscation.roles,
+      hotNamespaces: (report.obfuscation.hotNamespaces || []).slice(0, 8),
+      ranked: (report.obfuscation.ranked || []).slice(0, 60),
       gameSpecific: (report.obfuscation.gameSpecific || []).slice(0, 60),
     },
   };

@@ -128,6 +128,8 @@ contextBridge.exposeInMainWorld('seMenu', {
     readFile: opts => invoke('il2cpp:readFile', opts),
     saveFile: opts => invoke('il2cpp:saveFile', opts),
     downloadFile: opts => invoke('il2cpp:downloadFile', opts),
+    saveAs: opts => invoke('il2cpp:saveAs', opts),
+    revealFile: opts => invoke('il2cpp:revealFile', opts),
     downloadAll: opts => invoke('il2cpp:downloadAll', opts),
     openFolder: opts => invoke('il2cpp:openFolder', opts),
   },

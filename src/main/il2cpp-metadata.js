@@ -764,41 +764,67 @@ function repairMetadata(buf, opts) {
   }
 
   /* -- 3c. string literals that are not in stock form ---------------------
-     A stock stringLiteral table is a list of (length, dataIndex) pairs into a
-     concatenation of NUL-terminated UTF-8 strings, so dataIndex + length must
-     fit inside stringLiteralData and the blob must be full of NULs. When those
-     two facts do not hold, the lengths are gone and Il2CppDumper throws
-     OutOfMemory reading a bogus length. Detach, keep the bytes, say so. */
+     A stock stringLiteral table is a list of (length, dataIndex) pairs into
+     stringLiteralData, and that section is a plain concatenation of UTF-8
+     strings addressed by offset and length - it is NOT NUL-separated, so the
+     count of NUL bytes says nothing. What a real table must satisfy is:
+     every dataIndex + length fits inside the blob, the rows advance through the
+     blob without overlapping, and the runs decode as text. When those do not
+     hold the lengths are gone and Il2CppDumper throws OutOfMemory reading a
+     bogus length. Detach, keep the bytes, say so. */
   {
     const sl = sectionByName(header, 'stringLiteral');
     const sld = sectionByName(header, 'stringLiteralData');
     if (sl && sl.size >= 8 && sld && sld.size > 0) {
       const count = (sl.size / 8) | 0;
+      const decoder = new TextDecoder('utf-8', { fatal: true });
       let outside = 0;
-      let nulBytes = 0;
+      let backwards = 0;
+      let unreadable = 0;
+      let sampled = 0;
+      let prevEnd = 0;
+      const step = Math.max(1, Math.floor(count / 500));
       for (let i = 0; i < count; i++) {
         const len = out.readUInt32LE(sl.offset + i * 8);
         const di = out.readUInt32LE(sl.offset + i * 8 + 4);
-        if (di + len > sld.size) outside++;
+        if (di + len > sld.size) { outside++; continue; }
+        if (di < prevEnd) backwards++;
+        prevEnd = di + len;
+        if (i % step !== 0) continue;
+        sampled++;
+        let bad = false;
+        for (let k = di; k < di + len; k++) {
+          const c = out[sld.offset + k];
+          if (c === 9 || c === 10 || c === 13) continue;
+          if (c < 0x20 || c === 0x7F) { bad = true; break; }
+        }
+        if (!bad) {
+          try { decoder.decode(out.subarray(sld.offset + di, sld.offset + di + len)); } catch (e) { bad = true; }
+        }
+        if (bad) unreadable++;
       }
-      for (let i = 0; i < sld.size; i++) if (out[sld.offset + i] === 0) nulBytes++;
-      const looksStock = outside === 0 && nulBytes >= count * 0.9;
+      const readable = sampled ? 1 - unreadable / sampled : 0;
+      const looksStock = outside === 0 && backwards === 0 && readable >= 0.98;
       if (!looksStock) {
         out.writeInt32LE(0, sl.tableOffset + 4);
         repairs.push({
           code: 'string-literals-detached',
           detail: `${outside} of ${count} stringLiteral length/dataIndex pair(s) point outside the ${sld.size}-byte data section, ` +
-            `and that section holds ${nulBytes} NUL byte(s) where a NUL-terminated string table would hold about ${count}. ` +
-            'The lengths are not present in this container, so the table is detached: stringliteral.json will be empty.',
+            `${backwards} run backwards into the previous literal, and ` +
+            `${(readable * 100).toFixed(1)}% of ${sampled} sampled runs decode as text. ` +
+            'A stock table can violate none of those, so the pair is detached: stringliteral.json will be empty.',
           entries: count,
           outside,
-          nulBytes,
+          backwards,
+          readable: Number(readable.toFixed(3)),
+          sampled,
           preservedAt: sl.offset,
           preservedBytes: sl.size,
         });
         uncertain.push(
-          'string literals are not recoverable: the container kept dataIndex values but not lengths, and the data ' +
-          `section (${sld.size} bytes at 0x${sld.offset.toString(16)}) is not NUL-terminated UTF-8.`);
+          'string literals are not recoverable: the table does not address the data section as a ' +
+          `sequence of UTF-8 strings (${outside} row(s) outside, ${backwards} overlapping, ` +
+          `${(readable * 100).toFixed(1)}% of sampled runs readable).`);
       }
     }
   }

@@ -1,7 +1,7 @@
 {
   "name": "se-menu",
   "productName": "SE-MENU",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "SE-MENU — a compact liquid-glass utility console for Windows.",
   "main": "src/main/main.js",
   "author": "sside",
@@ -11,11 +11,12 @@
     "dev": "electron . --dev",
     "selftest": "electron . --selftest",
     "shots": "electron . --shots",
-    "dist": "electron-builder --win --publish never",
+    "dist": "node scripts/clean-dist.js && electron-builder --win --publish never",
     "icon": "python scripts/make-icon.py",
     "fonts": "node scripts/install-fonts.js",
     "postinstall": "node scripts/install-fonts.js",
-    "test:il2cpp": "node scripts/test-il2cpp-pipeline.js"
+    "test:il2cpp": "node scripts/test-il2cpp-pipeline.js",
+    "clean:dist": "node scripts/clean-dist.js"
   },
   "devDependencies": {
     "electron": "^33.4.11",

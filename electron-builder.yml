@@ -36,8 +36,8 @@ nsis:
   shortcutName: SE-MENU
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
-  artifactName: semenu-v1.0.3-Setup.${ext}
+  artifactName: semenu-v1.0.4-Setup.${ext}
   runAfterFinish: true
 
 portable:
-  artifactName: semenu-v1.0.3.${ext}
+  artifactName: semenu-v1.0.4.${ext}
