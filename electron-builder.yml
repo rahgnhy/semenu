@@ -25,9 +25,8 @@ win:
   icon: assets/icon.ico
   executableName: semenu
 
-# Artifact names are spelled out so the shipped files read exactly
-# semenu-v1.0.exe / semenu-v1.0-Setup.exe. Bump both strings and the
-# package.json version together for the next release.
+# Artifact names come from the package.json version, so a bump is one edit and
+# the shipped files always read semenu-v<version>.exe / semenu-v<version>-Setup.exe.
 nsis:
   oneClick: false
   perMachine: false
@@ -36,8 +35,8 @@ nsis:
   shortcutName: SE-MENU
   installerIcon: assets/icon.ico
   uninstallerIcon: assets/icon.ico
-  artifactName: semenu-v1.0.4-Setup.${ext}
+  artifactName: semenu-v${version}-Setup.${ext}
   runAfterFinish: true
 
 portable:
-  artifactName: semenu-v1.0.4.${ext}
+  artifactName: semenu-v${version}.${ext}
